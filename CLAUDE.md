@@ -1,6 +1,6 @@
 # DropOut library catalog — instructions for Claude
 
-This repo builds the public, browsable catalog of the DropOut KiCad library (`karlTbowers/dropout-kicad-library`): one page per part with its symbol and footprint drawings, every field, distributor links, and (planned) an interactive 3D view. It is published to GitHub Pages at **https://karltbowers.github.io/dropout-library-catalog/**.
+This repo builds the public, browsable catalog of the DropOut KiCad library (`karlTbowers/dropout-kicad-library`): one page per part with its symbol and footprint drawings, every field, distributor links, and an interactive 3D view of its footprint's model. It is published to GitHub Pages at **https://karltbowers.github.io/dropout-library-catalog/**.
 
 It is a separate repo so the library stays lean: every board mounts the library as a submodule, and none of them needs the site's sources or tooling. The library repo contains only parts and their checks.
 
@@ -10,11 +10,14 @@ It is a separate repo so the library stays lean: every board mounts the library 
 
 ```
 scripts/extract_catalog.py     reads a library checkout → src/data/parts.json + public/parts/<Lib>/<Symbol>/*.svg
+                               + public/models/<FpLib>/<Footprint>.glb (one per footprint with a model)
+scripts/optimize_models.mjs    `npm run models`: compresses those GLBs in place (gltf-transform, meshopt)
+src/components/ModelViewer.astro  3D viewer (three.js), or a "no 3D model" panel
 src/lib/parts.ts               loads parts.json (empty catalog if absent)
 src/pages/index.astro          catalog: search + category and manufacturer filters, one row per part
-src/pages/parts/[...slug].astro  part page: drawings, field table, datasheet/DigiKey/Mouser, copy buttons, STEP link
+src/pages/parts/[...slug].astro  part page: drawings, 3D viewer, field table, datasheet/DigiKey/Mouser, copy buttons, STEP link
 src/styles/tokens.css          every colour and font as a CSS token (light and dark)
-.github/workflows/catalog.yml  extract (kicad/kicad:10.0) → build (Node) → deploy (Pages)
+.github/workflows/catalog.yml  extract (kicad/kicad:10.0) → build (Node: models, astro) → deploy (Pages)
 ```
 
 The workflow checks out the library's `main` at build time; nothing from the library is committed here. It runs on:
@@ -22,7 +25,7 @@ The workflow checks out the library's `main` at build time; nothing from the lib
 - a nightly schedule, as a fallback;
 - pushes to this repo's `main`, and manually (`workflow_dispatch`). Pull requests build without deploying.
 
-`parts.json` and `public/parts/` are generated, not committed (`.gitignore`).
+`parts.json`, `public/parts/`, and `public/models/` are generated, not committed (`.gitignore`).
 
 ## Build locally
 
@@ -30,14 +33,20 @@ Needs Node 22+, Python 3, and KiCad 10 (`kicad-cli`).
 
 ```bash
 python3 scripts/extract_catalog.py ~/Dev/dropout-kicad-library --out .
-npm ci && npm run dev        # http://localhost:4321/dropout-library-catalog/
+npm ci && npm run models && npm run dev   # http://localhost:4321/dropout-library-catalog/
 ```
 
 ## Decisions already made with the user
 
 - **Generator: Astro.** Not Hugo, Jekyll, seite, or KiCAD-Prism (the user reviewed and rejected KiCAD-Prism).
 - **Separate repo** from the library (2026-10-22), named `dropout-library-catalog`; rebuilt by library push (dispatch) plus nightly.
-- **Interactive 3D model viewer is required** (see to-do).
+- **Interactive 3D model viewer is required.**
+- **3D approach (2026-10-22): convert at build time, view with three.js.** In the extract job, each footprint is placed on a small temporary board (outline 1 mm outside the footprint's graphics; `lib/dropout-kicad-library` symlinked to the library checkout so the `${KIPRJMOD}` model path resolves) and exported with `kicad-cli pcb export glb --include-pads --include-silkscreen --include-soldermask`. Then `gltf-transform optimize` (meshopt + quantization, no simplification, meshes and materials kept separate) in the build job. Why:
+  - KiCad does the STEP tessellation and placement exactly as a board would, so the STEP colours (body, balls/pins) come through, and the model sits on the real pads, which doubles as a model-alignment check. No OpenCascade/CadQuery install needed: `kicad-cli` is already in the extract container.
+  - Pages stay fast: no STEP parsing in the browser (occt-import-js would ship a multi-megabyte WASM and tessellate on every visit). The S32K344's LFBGA-257 is 2.5 MB as exported, 0.4 MB compressed.
+  - three.js over `<model-viewer>`: it needs toggling named meshes (board, silkscreen), precise top/bottom views, and a background from the theme tokens; three.js does all of it in a small island, while `<model-viewer>` bundles three.js anyway and hides the scene graph.
+  - three.js is an npm dependency at an exact version (`package.json`), bundled by Astro and loaded only when a viewer scrolls near the screen; no CDN scripts. `gltf-transform` is a dev dependency, also exact.
+- **Viewer:** orbit (drag), zoom (wheel/pinch), pan (right-drag/two-finger); 3D/Top/Bottom presets; Board and Silkscreen toggles (by glTF mesh name: `board_PCB`, `board_soldermask`, `board_silkscreen`; `board_pad` and the component always show); background `--viewer-bg`; renders on demand. Footprints without a model (or whose STEP is missing from the library) get a "No 3D model for this footprint." panel; a load failure shows a message, not a broken canvas. A failed GLB export is a build warning, not a build failure.
 - **No DropOut branding exists yet.** Clean, neutral engineering-datasheet look, light and dark modes, all colours and fonts as tokens in `src/styles/tokens.css` so branding can drop in later.
 - **Catalog page:** search plus filters (category, manufacturer, package); one row per part.
 - **Part page:** symbol and footprint SVGs side by side; full field table; datasheet, DigiKey, and Mouser links; copy buttons for MPN and library reference (`DropOut_Power:LM74910H-Q1`); 3D viewer.
@@ -45,13 +54,12 @@ npm ci && npm run dev        # http://localhost:4321/dropout-library-catalog/
 
 ## Status
 
-Done (skeleton, 2026-10-22): extraction of fields and symbol/footprint SVGs (footprint drawings plot F.Cu, B.Cu, F.Mask, F.SilkS, F.CrtYd), catalog page with search and filters, part page with drawings, fields, links, copy buttons, and a STEP download link; workflow with dispatch, nightly, and Pages deploy. Tested on a one-part sample library and on the empty library.
+Done (2026-10-22): 3D viewer (see decision above). Skeleton: extraction of fields and symbol/footprint SVGs (footprint drawings plot F.Cu, B.Cu, F.Mask, F.SilkS, F.CrtYd), catalog page with search and filters, part page with drawings, fields, links, copy buttons, and a STEP download link; workflow with dispatch, nightly, and Pages deploy. Tested on a one-part sample library and on the empty library.
 
 To do, alongside the first real parts:
-1. **3D:** in the extract job, build one GLB per footprint by placing the footprint on a minimal temporary board and running `kicad-cli pcb export glb`; add a `<model-viewer>` (or small three.js island) on part pages only: orbit/zoom/pan/reset, top/bottom/isometric presets, toggles for substrate and silkscreen, theme-matched background, "Download STEP". The GLB shows the model on the real pads, so it doubles as a model-alignment check.
-2. **Package filter** on the catalog page (needs a package field or footprint-derived package).
-3. **Pagefind** static search once the catalog outgrows the client-side filter.
-4. **Later:** "used in" board links, nightly DigiKey/Mouser stock and price snapshot, per-part changelog from library git history.
+1. **Package filter** on the catalog page (needs a package field or footprint-derived package).
+2. **Pagefind** static search once the catalog outgrows the client-side filter.
+3. **Later:** "used in" board links, nightly DigiKey/Mouser stock and price snapshot, per-part changelog from library git history.
 
 ## The dispatch token (one-time, done by the user)
 

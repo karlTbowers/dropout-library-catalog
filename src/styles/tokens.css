@@ -10,6 +10,7 @@
 	--border: #d8dce1;
 	--accent: #1f5fae;
 	--drawing-bg: #ffffff;
+	--viewer-bg: #eef0f3;
 }
 @media (prefers-color-scheme: dark) {
 	:root {
@@ -20,6 +21,7 @@
 		--border: #333a42;
 		--accent: #7fb0ec;
 		--drawing-bg: #ffffff; /* KiCad drawings are plotted for a light background */
+		--viewer-bg: #23282e;
 	}
 }
 * { box-sizing: border-box; }
@@ -43,3 +45,19 @@ input, select { font: inherit; color: var(--text); background: var(--surface); b
 .drawing img { width: 100%; height: 16rem; object-fit: contain; }
 .drawing figcaption { color: #5b636e; font-size: 0.85rem; }
 button.copy { font: inherit; font-size: 0.8rem; cursor: pointer; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 0.1rem 0.45rem; margin-left: 0.4rem; }
+.viewer3d { margin: 1.5rem 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.viewer3d-stage { position: relative; height: clamp(16rem, 60vw, 30rem); background: var(--viewer-bg); }
+.viewer3d-stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.viewer3d-stage canvas:active { cursor: grabbing; }
+.viewer3d-status[hidden] { display: none; }
+.viewer3d-status { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 1rem; text-align: center; color: var(--muted); }
+.viewer3d-none { display: grid; place-items: center; height: 8rem; color: var(--muted); }
+.viewer3d-controls:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; padding: 0.6rem 0.75rem; border-top: 1px solid var(--border); font-size: 0.9rem; }
+.viewer3d-group { display: inline-flex; }
+.viewer3d-group button { font: inherit; font-size: 0.85rem; cursor: pointer; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 0.25rem 0.7rem; margin-left: -1px; }
+.viewer3d-group button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.viewer3d-group button:last-child { border-radius: 0 6px 6px 0; }
+.viewer3d-controls label { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
+.viewer3d figcaption { color: var(--muted); font-size: 0.85rem; padding: 0 0.75rem 0.6rem; }
+.viewer3d-controls:not([hidden]) + figcaption, .viewer3d-none + figcaption { padding-top: 0; }
+@media (hover: none) { .viewer3d-hint { display: none; } }

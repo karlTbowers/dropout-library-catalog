@@ -19,7 +19,8 @@ export interface Part {
 	mpn: string;
 	digikey_pn: string;
 	mouser_pn: string;
-	model: string | null;
+	model: string | null; // the footprint's model path as written in the footprint
+	model_glb: string | null; // models/<FpLib>/<Footprint>.glb under public/, when a model was exported
 	fields: Record<string, string>;
 	symbol_svgs: string[];
 	footprint_svg: string | null;

@@ -9,8 +9,12 @@ Reads <library-dir>/symbols/*.kicad_sym and <library-dir>/footprints/*.pretty an
                                               footprint, 3D model path, drawing paths)
   public/parts/<Lib>/<Symbol>/symbol-<n>.svg  one drawing per symbol unit
   public/parts/<Lib>/<Symbol>/footprint.svg   the linked footprint, when it is in the library
+  public/models/<FpLib>/<Footprint>.glb       the footprint's 3D model on its pads, one per footprint
 
-Drawings come from kicad-cli (KiCad 10). An empty library gives an empty catalog.
+Drawings and models come from kicad-cli (KiCad 10). Each GLB is the footprint placed on a small
+temporary board (pads, mask, silkscreen) with its STEP model, so the model's colours are kept and
+any misalignment with the pads shows. The site build compresses them (scripts/optimize_models.mjs).
+An empty library gives an empty catalog.
 """
 import argparse
 import json
@@ -31,6 +35,11 @@ def kicad_cli():
         if shutil.which(c) or os.path.exists(c):
             return c
     sys.exit("kicad-cli not found")
+
+
+# Footprints reference models as ${KIPRJMOD}/<this prefix>/3dmodels/..., i.e. the library mounted
+# as a submodule at lib/dropout-kicad-library (library CLAUDE.md)
+MODEL_PREFIX = "${KIPRJMOD}/lib/dropout-kicad-library/"
 
 
 # --- minimal S-expression reader ------------------------------------------------------
@@ -92,6 +101,43 @@ def footprint_model(pretty_dir, fp_name):
     return model[1] if model else None
 
 
+POINT = re.compile(r"\((?:start|end|mid|center|xy|at) (-?[\d.]+) (-?[\d.]+)")
+
+
+def export_glb(cli, lib_dir, pretty_dir, fp_lib, fp_name, out_file, tmp):
+    """Place the footprint on a board just larger than it and export a GLB. Returns True on success."""
+    work = os.path.join(tmp, "glb")
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(os.path.join(work, "lib"))
+    os.symlink(lib_dir, os.path.join(work, "lib", "dropout-kicad-library"))  # resolves ${KIPRJMOD}/lib/...
+
+    fp = open(os.path.join(pretty_dir, f"{fp_name}.kicad_mod"), encoding="utf-8").read()
+    pts = [(float(x), float(y)) for x, y in POINT.findall(fp)]
+    xs, ys = [p[0] for p in pts] or [0], [p[1] for p in pts] or [0]
+    m = 1.0  # board margin around the footprint, mm
+    # a board footprint is the library footprint with a library-qualified name and a position
+    placed = fp.replace(f'(footprint "{fp_name}"', f'(footprint "{fp_lib}:{fp_name}"\n\t(at 0 0)', 1)
+    board = (
+        '(kicad_pcb (version 20260206) (generator "dropout-catalog")\n'
+        '(general (thickness 1.6))\n'
+        '(layers (0 "F.Cu" signal) (2 "B.Cu" signal) (1 "F.Mask" user) (3 "B.Mask" user)'
+        ' (5 "F.SilkS" user) (7 "B.SilkS" user) (25 "Edge.Cuts" user))\n'
+        f"{placed}\n"
+        f"(gr_rect (start {min(xs) - m} {min(ys) - m}) (end {max(xs) + m} {max(ys) + m})"
+        ' (stroke (width 0.05) (type solid)) (fill no) (layer "Edge.Cuts"))\n)\n'
+    )
+    pcb = os.path.join(work, "board.kicad_pcb")
+    open(pcb, "w", encoding="utf-8").write(board)
+    os.makedirs(os.path.dirname(out_file), exist_ok=True)
+    r = subprocess.run([cli, "pcb", "export", "glb", "-f", "--include-pads", "--include-silkscreen",
+                        "--include-soldermask", "-o", out_file, pcb], capture_output=True, text=True)
+    if r.returncode != 0 or not os.path.exists(out_file):
+        print(f"warning: GLB export failed for {fp_lib}:{fp_name}: {r.stderr.strip() or r.stdout.strip()}",
+              file=sys.stderr)
+        return False
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("library")
@@ -101,8 +147,10 @@ def main():
     cli = kicad_cli()
 
     parts_dir = os.path.join(out, "public", "parts")
-    shutil.rmtree(parts_dir, ignore_errors=True)
-    os.makedirs(parts_dir)
+    models_dir = os.path.join(out, "public", "models")
+    for d in (parts_dir, models_dir):
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d)
     os.makedirs(os.path.join(out, "src", "data"), exist_ok=True)
 
     sym_dir = os.path.join(lib_dir, "symbols")
@@ -110,6 +158,7 @@ def main():
     sym_files = sorted(f for f in os.listdir(sym_dir) if f.endswith(".kicad_sym")) if os.path.isdir(sym_dir) else []
 
     parts = []
+    glbs = {}  # footprint -> GLB path (or None), one export per footprint
     with tempfile.TemporaryDirectory() as tmp:
         for f in sym_files:
             sym_path = os.path.join(sym_dir, f)
@@ -131,7 +180,7 @@ def main():
 
                 # footprint drawing, when the footprint is in this library
                 footprint = fields.get("Footprint", "")
-                fp_svg = model = None
+                fp_svg = model = glb = None
                 if ":" in footprint:
                     fp_lib, fp_name = footprint.split(":", 1)
                     pretty = os.path.join(fp_dir, f"{fp_lib}.pretty")
@@ -144,6 +193,14 @@ def main():
                         shutil.copy(os.path.join(export, f"{fp_name}.svg"), os.path.join(dest, "footprint.svg"))
                         fp_svg = f"{base}/footprint.svg"
                         model = footprint_model(pretty, fp_name)
+                        if footprint not in glbs:
+                            glbs[footprint] = None
+                            step = model[len(MODEL_PREFIX):] if model and model.startswith(MODEL_PREFIX) else None
+                            if step and os.path.exists(os.path.join(lib_dir, step)):
+                                rel = f"models/{slug(fp_lib)}/{slug(fp_name)}.glb"
+                                if export_glb(cli, lib_dir, pretty, fp_lib, fp_name, os.path.join(out, "public", rel), tmp):
+                                    glbs[footprint] = rel
+                        glb = glbs[footprint]
 
                 parts.append({
                     "id": f"{lib}:{name}",
@@ -162,6 +219,7 @@ def main():
                     "digikey_pn": fields.get("DigiKey_PN", ""),
                     "mouser_pn": fields.get("Mouser_PN", ""),
                     "model": model,
+                    "model_glb": glb,
                     "fields": fields,
                     "symbol_svgs": units,
                     "footprint_svg": fp_svg,
@@ -170,7 +228,7 @@ def main():
     parts.sort(key=lambda p: (p["library"], p["name"]))
     with open(os.path.join(out, "src", "data", "parts.json"), "w", encoding="utf-8") as fh:
         json.dump(parts, fh, indent=1, ensure_ascii=False)
-    print(f"catalog: {len(parts)} part(s) from {len(sym_files)} symbol librar{'y' if len(sym_files) == 1 else 'ies'}")
+    print(f"catalog: {len(parts)} part(s), {sum(1 for g in glbs.values() if g)} 3D model(s) from {len(sym_files)} symbol librar{'y' if len(sym_files) == 1 else 'ies'}")
 
 
 if __name__ == "__main__":

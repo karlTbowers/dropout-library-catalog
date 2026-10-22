@@ -1,0 +1,175 @@
+---
+// Interactive 3D view of a footprint's model (a GLB built by scripts/extract_catalog.py and
+// compressed by scripts/optimize_models.mjs). three.js is bundled from npm (exact version in
+// package.json) and only loaded when the viewer scrolls near the screen. Without a model it
+// shows a plain "no 3D model" panel.
+import { asset } from '../lib/parts';
+
+interface Props {
+	glb: string | null; // path under public/, e.g. models/<Lib>/<Footprint>.glb
+	footprint: string;
+	step?: string | null; // STEP download URL, if the footprint has a model
+}
+const { glb, footprint, step } = Astro.props;
+---
+
+<figure class="viewer3d" data-glb={glb ? asset(glb) : undefined}>
+	{
+		glb ? (
+			<>
+				<div class="viewer3d-stage">
+					<canvas aria-label={`Interactive 3D model of footprint ${footprint}`} role="img" />
+					<p class="viewer3d-status" aria-live="polite">Loading 3D model…</p>
+				</div>
+				<div class="viewer3d-controls" hidden>
+					<span class="viewer3d-group" role="group" aria-label="View">
+						<button type="button" data-view="iso">3D</button>
+						<button type="button" data-view="top">Top</button>
+						<button type="button" data-view="bottom">Bottom</button>
+					</span>
+					<label><input type="checkbox" data-toggle="board" checked /> Board</label>
+					<label><input type="checkbox" data-toggle="silkscreen" checked /> Silkscreen</label>
+					{step && <a href={step}>Download STEP</a>}
+				</div>
+			</>
+		) : (
+			<div class="viewer3d-stage viewer3d-none">
+				<p>No 3D model for this footprint.</p>
+			</div>
+		)
+	}
+	<figcaption>
+		3D model{glb ? ' on its footprint' : ''}{glb && <span class="viewer3d-hint"> · drag to rotate, scroll or pinch to zoom, right-drag or two-finger drag to pan</span>}
+	</figcaption>
+</figure>
+
+<script>
+	// Board meshes as named by `kicad-cli pcb export glb`; everything else is the component.
+	const GROUPS: Record<string, (name: string) => boolean> = {
+		board: (n) => n.startsWith('board_PCB') || n.startsWith('board_soldermask'),
+		silkscreen: (n) => n.startsWith('board_silkscreen'),
+	};
+
+	async function mount(fig: HTMLElement) {
+		const url = fig.dataset.glb!;
+		const canvas = fig.querySelector('canvas')!;
+		const status = fig.querySelector<HTMLElement>('.viewer3d-status')!;
+		const controlsBar = fig.querySelector<HTMLElement>('.viewer3d-controls')!;
+		try {
+			const [THREE, { OrbitControls }, { GLTFLoader }, { MeshoptDecoder }, { RoomEnvironment }] = await Promise.all([
+				import('three'),
+				import('three/examples/jsm/controls/OrbitControls.js'),
+				import('three/examples/jsm/loaders/GLTFLoader.js'),
+				import('three/examples/jsm/libs/meshopt_decoder.module.js'),
+				import('three/examples/jsm/environments/RoomEnvironment.js'),
+			]);
+
+			const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+			renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+			const scene = new THREE.Scene();
+			const pmrem = new THREE.PMREMGenerator(renderer);
+			scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+			const camera = new THREE.PerspectiveCamera(35, 1, 0.0001, 10);
+			const controls = new OrbitControls(camera, canvas);
+			controls.enableDamping = true;
+			controls.screenSpacePanning = true;
+
+			const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+			const gltf = await loader.loadAsync(url);
+			const model = gltf.scene;
+			scene.add(model);
+			// three.js names objects after glTF nodes; the toggles need the glTF mesh names.
+			const meshName = (o: THREE.Object3D) => {
+				const i = gltf.parser.associations.get(o)?.meshes;
+				return i === undefined ? '' : (gltf.parser.json.meshes[i].name ?? '');
+			};
+
+			// Frame the model: centre it, then size the camera to its bounding sphere (units are metres).
+			const box = new THREE.Box3().setFromObject(model);
+			const centre = box.getCenter(new THREE.Vector3());
+			model.position.sub(centre);
+			const radius = box.getBoundingSphere(new THREE.Sphere()).radius;
+			camera.near = radius / 100;
+			camera.far = radius * 100;
+			camera.updateProjectionMatrix();
+			controls.minDistance = radius * 0.3;
+			controls.maxDistance = radius * 20;
+
+			// glTF is Y-up; the board's top faces +Y and the footprint's "up" (KiCad -Y) is -Z.
+			const dist = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.05;
+			const views: Record<string, THREE.Vector3> = {
+				iso: new THREE.Vector3(0.55, 0.65, 0.75).normalize(),
+				top: new THREE.Vector3(0, 1, 1e-4).normalize(),
+				bottom: new THREE.Vector3(0, -1, 1e-4).normalize(),
+			};
+			const setView = (v: string) => {
+				camera.position.copy(views[v]).multiplyScalar(dist);
+				controls.target.set(0, 0, 0);
+				controls.update();
+				render();
+			};
+
+			// Background follows the page theme (token --viewer-bg).
+			const applyTheme = () => {
+				scene.background = new THREE.Color(getComputedStyle(fig).getPropertyValue('--viewer-bg').trim() || '#eef0f3');
+				render();
+			};
+			matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+
+			// Render on demand: on control changes, while damping settles, and on resize.
+			let frame = 0;
+			function render() {
+				if (frame) return;
+				frame = requestAnimationFrame(() => {
+					frame = 0;
+					if (controls.update()) render(); // damping still moving
+					renderer.render(scene, camera);
+				});
+			}
+			controls.addEventListener('change', render);
+			new ResizeObserver(() => {
+				const { clientWidth: w, clientHeight: h } = canvas;
+				if (!w || !h) return;
+				renderer.setSize(w, h, false);
+				camera.aspect = w / h;
+				camera.updateProjectionMatrix();
+				render();
+			}).observe(canvas);
+
+			controlsBar.addEventListener('click', (e) => {
+				const v = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-view]')?.dataset.view;
+				if (v) setView(v);
+			});
+			controlsBar.addEventListener('change', (e) => {
+				const input = e.target as HTMLInputElement;
+				const match = GROUPS[input.dataset.toggle ?? ''];
+				if (!match) return;
+				model.traverse((o) => {
+					if ((o as THREE.Mesh).isMesh && match(meshName(o))) o.visible = input.checked;
+				});
+				render();
+			});
+
+			applyTheme();
+			setView('iso');
+			status.hidden = true;
+			controlsBar.hidden = false;
+		} catch (err) {
+			console.error('3D viewer:', err);
+			status.textContent = 'The 3D model could not be shown in this browser.';
+		}
+	}
+
+	// Load three.js and the model only when the viewer is close to the screen.
+	const io = new IntersectionObserver(
+		(entries) => {
+			for (const e of entries) {
+				if (!e.isIntersecting) continue;
+				io.unobserve(e.target);
+				mount(e.target as HTMLElement);
+			}
+		},
+		{ rootMargin: '200px' },
+	);
+	document.querySelectorAll<HTMLElement>('figure.viewer3d[data-glb]').forEach((f) => io.observe(f));
+</script>

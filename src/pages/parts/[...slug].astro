@@ -1,6 +1,7 @@
 ---
 // One page per part: drawings, every field, distributor links, copyable library reference.
 import Base from '../../layouts/Base.astro';
+import ModelViewer from '../../components/ModelViewer.astro';
 import { loadParts, asset, LIBRARY_REPO, type Part } from '../../lib/parts';
 
 export function getStaticPaths() {
@@ -14,6 +15,7 @@ const mouser = link(part.mouser_pn);
 const shown = ['Reference', 'Value', 'Footprint', 'Datasheet', 'Description', 'Manufacturer', 'MPN', 'DigiKey_PN', 'Mouser_PN'];
 const otherFields = Object.entries(part.fields).filter(([k]) => !shown.includes(k));
 const stepPath = part.model?.replace(/^\$\{KIPRJMOD\}\/lib\/dropout-kicad-library\//, '');
+const stepUrl = stepPath ? `${LIBRARY_REPO}/blob/main/${stepPath}` : null;
 ---
 
 <Base title={`${part.mpn || part.name} · DropOut library`} description={part.description}>
@@ -44,6 +46,8 @@ const stepPath = part.model?.replace(/^\$\{KIPRJMOD\}\/lib\/dropout-kicad-librar
 		}
 	</div>
 
+	{part.footprint && <ModelViewer glb={part.model_glb} footprint={part.footprint} step={stepUrl} />}
+
 	<div class="table-wrap">
 		<table>
 			<tbody>
@@ -54,7 +58,7 @@ const stepPath = part.model?.replace(/^\$\{KIPRJMOD\}\/lib\/dropout-kicad-librar
 				<tr><th>Datasheet</th><td>{part.datasheet && part.datasheet !== '~' ? <a href={part.datasheet}>{part.datasheet}</a> : '—'}</td></tr>
 				<tr><th>DigiKey</th><td>{digikey ? <a href={`https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(digikey)}`}>{digikey}</a> : 'Not stocked'}</td></tr>
 				<tr><th>Mouser</th><td>{mouser ? <a href={`https://www.mouser.com/c/?q=${encodeURIComponent(mouser)}`}>{mouser}</a> : 'Not stocked'}</td></tr>
-				<tr><th>3D model</th><td>{stepPath ? <a href={`${LIBRARY_REPO}/blob/main/${stepPath}`}>Download STEP</a> : '—'}</td></tr>
+				<tr><th>3D model</th><td>{stepUrl ? <a href={stepUrl}>Download STEP</a> : '—'}</td></tr>
 				{otherFields.map(([k, v]) => <tr><th>{k}</th><td>{v}</td></tr>)}
 			</tbody>
 		</table>

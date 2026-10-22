@@ -36,13 +36,13 @@ jobs:
           ref: main
           path: library
 
-      - name: Extract parts, symbol and footprint drawings
+      - name: Extract parts, symbol and footprint drawings, 3D models
         run: |
           command -v python3 >/dev/null || { apt-get update && apt-get install -y --no-install-recommends python3; }
           python3 scripts/extract_catalog.py library --out .
           echo "library commit: $(git -C library rev-parse --short HEAD 2>/dev/null || echo unknown)"
           # one tarball keeps the paths intact (an empty public/parts/ would otherwise flatten the artifact)
-          tar -czf catalog-data.tgz src/data/parts.json public/parts
+          tar -czf catalog-data.tgz src/data/parts.json public/parts public/models
 
       - uses: actions/upload-artifact@v4
         with:
@@ -69,6 +69,7 @@ jobs:
       - run: tar -xzf catalog-data.tgz && rm catalog-data.tgz
 
       - run: npm ci
+      - run: npm run models   # compress the GLBs (gltf-transform, meshopt)
       - run: npm run build
 
       - uses: actions/upload-pages-artifact@v3

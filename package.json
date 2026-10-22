@@ -1,0 +1,16 @@
+{
+  "name": "dropout-library-catalog",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Browsable catalog of the DropOut KiCad library",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "astro": "^7.2.10"
+  }
+}

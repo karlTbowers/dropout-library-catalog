@@ -1,0 +1,62 @@
+---
+// One page per part: drawings, every field, distributor links, copyable library reference.
+import Base from '../../layouts/Base.astro';
+import { loadParts, asset, LIBRARY_REPO, type Part } from '../../lib/parts';
+
+export function getStaticPaths() {
+	return loadParts().map((part) => ({ params: { slug: part.slug }, props: { part } }));
+}
+
+const { part } = Astro.props as { part: Part };
+const link = (pn: string) => (pn && pn !== '-' ? pn : null);
+const digikey = link(part.digikey_pn);
+const mouser = link(part.mouser_pn);
+const shown = ['Reference', 'Value', 'Footprint', 'Datasheet', 'Description', 'Manufacturer', 'MPN', 'DigiKey_PN', 'Mouser_PN'];
+const otherFields = Object.entries(part.fields).filter(([k]) => !shown.includes(k));
+const stepPath = part.model?.replace(/^\$\{KIPRJMOD\}\/lib\/dropout-kicad-library\//, '');
+---
+
+<Base title={`${part.mpn || part.name} · DropOut library`} description={part.description}>
+	<p class="muted"><a href={import.meta.env.BASE_URL}>Catalog</a> / {part.category}</p>
+	<h1>{part.mpn || part.name}</h1>
+	<p>{part.description}</p>
+	<p>
+		Library reference <code>{part.id}</code><button class="copy" data-copy={part.id}>Copy</button>
+		{part.mpn && <>· MPN <code>{part.mpn}</code><button class="copy" data-copy={part.mpn}>Copy</button></>}
+	</p>
+
+	<div class="drawings">
+		{
+			part.symbol_svgs.map((svg, i) => (
+				<figure class="drawing">
+					<img src={asset(svg)} alt={`Symbol ${part.name}${part.symbol_svgs.length > 1 ? `, unit ${i + 1}` : ''}`} loading="lazy" />
+					<figcaption>Symbol{part.symbol_svgs.length > 1 ? `, unit ${i + 1}` : ''}</figcaption>
+				</figure>
+			))
+		}
+		{
+			part.footprint_svg && (
+				<figure class="drawing">
+					<img src={asset(part.footprint_svg)} alt={`Footprint ${part.footprint}`} loading="lazy" />
+					<figcaption>Footprint <span class="mono">{part.footprint}</span></figcaption>
+				</figure>
+			)
+		}
+	</div>
+
+	<div class="table-wrap">
+		<table>
+			<tbody>
+				<tr><th>Manufacturer</th><td>{part.manufacturer}</td></tr>
+				<tr><th>MPN</th><td class="mono">{part.mpn}</td></tr>
+				<tr><th>Value</th><td>{part.value}</td></tr>
+				<tr><th>Footprint</th><td class="mono">{part.footprint}</td></tr>
+				<tr><th>Datasheet</th><td>{part.datasheet && part.datasheet !== '~' ? <a href={part.datasheet}>{part.datasheet}</a> : '—'}</td></tr>
+				<tr><th>DigiKey</th><td>{digikey ? <a href={`https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(digikey)}`}>{digikey}</a> : 'Not stocked'}</td></tr>
+				<tr><th>Mouser</th><td>{mouser ? <a href={`https://www.mouser.com/c/?q=${encodeURIComponent(mouser)}`}>{mouser}</a> : 'Not stocked'}</td></tr>
+				<tr><th>3D model</th><td>{stepPath ? <a href={`${LIBRARY_REPO}/blob/main/${stepPath}`}>Download STEP</a> : '—'}</td></tr>
+				{otherFields.map(([k, v]) => <tr><th>{k}</th><td>{v}</td></tr>)}
+			</tbody>
+		</table>
+	</div>
+</Base>

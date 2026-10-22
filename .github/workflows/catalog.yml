@@ -1,0 +1,91 @@
+name: Catalog site
+
+# Builds the catalog from the library's main branch and deploys it to GitHub Pages:
+# https://karltbowers.github.io/dropout-library-catalog/
+
+on:
+  repository_dispatch:
+    types: [library-updated]   # sent by dropout-kicad-library CI on every push to its main
+  schedule:
+    - cron: "17 3 * * *"       # nightly fallback
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    container:
+      image: kicad/kicad:10.0
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the library (main)
+        uses: actions/checkout@v4
+        with:
+          repository: karlTbowers/dropout-kicad-library
+          ref: main
+          path: library
+
+      - name: Extract parts, symbol and footprint drawings
+        run: |
+          command -v python3 >/dev/null || { apt-get update && apt-get install -y --no-install-recommends python3; }
+          python3 scripts/extract_catalog.py library --out .
+          echo "library commit: $(git -C library rev-parse --short HEAD 2>/dev/null || echo unknown)"
+          # one tarball keeps the paths intact (an empty public/parts/ would otherwise flatten the artifact)
+          tar -czf catalog-data.tgz src/data/parts.json public/parts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: catalog-data
+          path: catalog-data.tgz
+          if-no-files-found: error
+
+  build:
+    needs: extract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: catalog-data
+          path: .
+
+      - run: tar -xzf catalog-data.tgz && rm catalog-data.tgz
+
+      - run: npm ci
+      - run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

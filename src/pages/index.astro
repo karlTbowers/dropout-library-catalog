@@ -1,0 +1,85 @@
+---
+import Base from '../layouts/Base.astro';
+import { loadParts, LIBRARY_REPO } from '../lib/parts';
+
+const parts = loadParts();
+const categories = [...new Set(parts.map((p) => p.category))].sort();
+const manufacturers = [...new Set(parts.map((p) => p.manufacturer).filter(Boolean))].sort();
+const base = import.meta.env.BASE_URL;
+---
+
+<Base title="DropOut library catalog">
+	<h1>DropOut KiCad library</h1>
+	<p class="muted">
+		Atomic parts (one symbol = one orderable MPN, with footprint and 3D model) from
+		<a href={LIBRARY_REPO}>dropout-kicad-library</a>. Boards use it as a submodule at
+		<code>lib/dropout-kicad-library</code>.
+	</p>
+
+	{
+		parts.length === 0 ? (
+			<p class="empty">The library has no parts yet. Parts appear here automatically when they are added to the library.</p>
+		) : (
+			<>
+				<div class="filters" role="search">
+					<input id="q" type="search" placeholder="Search MPN, name, description…" aria-label="Search parts" />
+					<select id="cat" aria-label="Category">
+						<option value="">All categories</option>
+						{categories.map((c) => <option value={c}>{c}</option>)}
+					</select>
+					<select id="mfr" aria-label="Manufacturer">
+						<option value="">All manufacturers</option>
+						{manufacturers.map((m) => <option value={m}>{m}</option>)}
+					</select>
+				</div>
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr><th>Part</th><th>Manufacturer</th><th>Category</th><th>Footprint</th><th>Description</th></tr>
+						</thead>
+						<tbody id="rows">
+							{parts.map((p) => (
+								<tr
+									data-cat={p.category}
+									data-mfr={p.manufacturer}
+									data-text={[p.name, p.mpn, p.manufacturer, p.description, p.keywords, p.footprint].join(' ').toLowerCase()}
+								>
+									<td><a href={`${base}parts/${p.slug}/`}>{p.mpn || p.name}</a></td>
+									<td>{p.manufacturer}</td>
+									<td>{p.category}</td>
+									<td class="mono">{p.footprint.split(':')[1] ?? p.footprint}</td>
+									<td>{p.description}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+				<p class="muted"><span id="count">{parts.length}</span> of {parts.length} parts</p>
+			</>
+		)
+	}
+
+	<script>
+		const q = document.getElementById('q') as HTMLInputElement | null;
+		const cat = document.getElementById('cat') as HTMLSelectElement | null;
+		const mfr = document.getElementById('mfr') as HTMLSelectElement | null;
+		const rows = [...document.querySelectorAll<HTMLTableRowElement>('#rows tr')];
+		const count = document.getElementById('count');
+		function apply() {
+			const text = (q?.value ?? '').trim().toLowerCase();
+			let shown = 0;
+			for (const r of rows) {
+				const ok =
+					(!text || (r.dataset.text ?? '').includes(text)) &&
+					(!cat?.value || r.dataset.cat === cat.value) &&
+					(!mfr?.value || r.dataset.mfr === mfr.value);
+				r.hidden = !ok;
+				if (ok) shown++;
+			}
+			if (count) count.textContent = String(shown);
+		}
+		q?.addEventListener('input', apply);
+		cat?.addEventListener('change', apply);
+		mfr?.addEventListener('change', apply);
+	</script>
+</Base>

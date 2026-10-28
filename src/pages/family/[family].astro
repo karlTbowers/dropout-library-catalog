@@ -1,0 +1,85 @@
+---
+// One page per mechanical-part family, McMaster-Carr style: a section per group with its picture,
+// the specs every row shares, and a table of the orderable variants.
+import Base from '../../layouts/Base.astro';
+import { loadFamilies, loadParts, asset, type Family, type Part } from '../../lib/parts';
+import { byMpn, groupTables, type GroupTable } from '../../lib/families';
+
+export function getStaticPaths() {
+	const parts = loadParts();
+	return Object.entries(loadFamilies()).map(([key, fam]) => ({
+		params: { family: key },
+		props: { key, fam, tables: groupTables(key, fam, parts), parts },
+	}));
+}
+
+const { fam, tables, parts } = Astro.props as { key: string; fam: Family; tables: GroupTable[]; parts: Part[] };
+const base = import.meta.env.BASE_URL;
+const inLibrary = byMpn(parts);
+const total = tables.reduce((n, t) => n + t.parts.length, 0);
+const partUrl = (p: Part) => `${base}parts/${p.slug}/`;
+---
+
+<Base title={`${fam.title} · DropOut parts library`} description={fam.intro}>
+	<p class="breadcrumb"><a href={base}>All parts</a> / <a href={`${base}#families`}>Families</a> / {fam.title}</p>
+	<h1>{fam.title}</h1>
+	{fam.intro && <p class="muted family-intro">{fam.intro}</p>}
+	<p class="muted">{total} part{total === 1 ? '' : 's'} in {tables.length} group{tables.length === 1 ? '' : 's'}</p>
+	{
+		tables.length > 1 && (
+			<nav class="group-nav" aria-label="Groups">
+				{tables.map((t) => <a href={`#${t.slug}`}>{t.name} <span>{t.parts.length}</span></a>)}
+			</nav>
+		)
+	}
+
+	{
+		tables.map((t) => (
+			<section class="group" id={t.slug}>
+				<h2>{t.name}</h2>
+				<div class="group-body">
+					<div class="group-side">
+						{t.picture && <img src={asset(t.picture)} alt="" loading="lazy" />}
+						{t.shared.length > 0 && (
+							<dl class="group-shared">
+								{t.shared.map(([k, v]) => (
+									<div><dt>{k}</dt><dd>{v}</dd></div>
+								))}
+								{t.mates.length > 0 && (
+									<div>
+										<dt>Mates with</dt>
+										<dd>
+											{t.mates.map((m, i) => (
+												<>{i > 0 && ', '}{inLibrary.get(m) ? <a href={partUrl(inLibrary.get(m)!)}>{m}</a> : m}</>
+											))}
+										</dd>
+									</div>
+								)}
+							</dl>
+						)}
+					</div>
+					<div class="table-wrap">
+						<table class="variants">
+							<thead>
+								<tr>
+									{t.rowPictures && <th><span class="visually-hidden">Footprint</span></th>}
+									<th>Part</th>
+									{t.columns.map((c) => <th>{c}</th>)}
+								</tr>
+							</thead>
+							<tbody>
+								{t.parts.map((p) => (
+									<tr>
+										{t.rowPictures && <td class="thumb">{p.thumb_svg && <img src={asset(p.thumb_svg)} alt="" loading="lazy" width="48" height="48" />}</td>}
+										<td class="pn"><a href={partUrl(p)}>{p.mpn || p.name}</a></td>
+										{t.columns.map((c) => <td>{t.value(p, c)}</td>)}
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</section>
+		))
+	}
+</Base>

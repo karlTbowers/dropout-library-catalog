@@ -11,6 +11,7 @@ It is a separate repo so the library stays lean: every board mounts the library 
 ```
 scripts/extract_catalog.py     reads a library checkout → src/data/parts.json + public/parts/<Lib>/<Symbol>/*.svg
                                (symbol-<n>.svg, footprint.svg, and thumb.svg: the footprint without REF**, cropped)
+                               + src/data/families.json (library parts/families.yaml; part.yaml catalog blocks → parts.json)
                                + public/models/<FpLib>/<Footprint>.glb (one per footprint with a model)
 scripts/optimize_models.mjs    `npm run models`: compresses those GLBs in place (gltf-transform, meshopt)
 src/components/ModelViewer.astro  3D viewer (three.js), or a "no 3D model" panel
@@ -19,6 +20,8 @@ src/lib/specs.ts               category names, spec columns and filters per cate
 src/components/PartBrowser.astro  filter sidebar with live counts, sortable columns, chips, state in the URL, cards on phones
 src/pages/index.astro          home: category tiles + all parts, filtered by the header search as you type
 src/pages/category/[cat].astro one page per library category with its spec columns and filters
+src/lib/families.ts            family group tables: shared specs vs. columns that differ
+src/pages/family/[family].astro  one McMaster-style page per mechanical-part family
 src/pages/parts/[...slug].astro  part page: drawings, 3D viewer, field table, datasheet/DigiKey/Mouser, copy buttons, STEP link
 src/styles/tokens.css          every colour and font as a CSS token (light and dark)
 .github/workflows/catalog.yml  extract (kicad/kicad:10.0) → build (Node: models, astro) → deploy (Pages)
@@ -36,7 +39,7 @@ The workflow checks out the library's `main` at build time; nothing from the lib
 Needs Node 22+, Python 3, and KiCad 10 (`kicad-cli`).
 
 ```bash
-python3 scripts/extract_catalog.py ~/Dev/dropout-kicad-library --out .
+~/.cache/dropout/klt-venv/bin/python scripts/extract_catalog.py ~/Dev/dropout-kicad-library --out .   # any Python with PyYAML
 npm ci && npm run models && npm run dev   # http://localhost:4321/dropout-library-catalog/
 ```
 
@@ -54,7 +57,7 @@ npm ci && npm run models && npm run dev   # http://localhost:4321/dropout-librar
 - **No DropOut branding exists yet.** Clean, neutral engineering-datasheet look, light and dark modes, all colours and fonts as tokens in `src/styles/tokens.css` so branding can drop in later.
 - **Catalog page:** search plus filters (category, manufacturer, package); one row per part.
 - **Part page:** symbol and footprint SVGs side by side; full field table; datasheet, DigiKey, and Mouser links; copy buttons for MPN and library reference (`DropOut_Power:LM74910H-Q1`); 3D viewer.
-- **UX model (2026-10-28): DigiKey for electronic parts, McMaster-Carr for mechanical ones.** Phase 1 (done): category tiles; per-category spec columns and filters built from fields the parts already have (`Case`, `Voltage`, `Tolerance`, `Power`, `Dielectric`, AEC qualification from `Temperature_Grade`); filter counts per option; numeric sorting; filters, search and sort in the URL; value-aware search (`100n` = `0.1u`, `4k7`); one card per part on phones; part page with a summary (key specs, badges, Datasheet/DigiKey/Mouser/STEP buttons, copyable symbol and MPN), grouped specs, KiCad fields collapsed, and alternatives (same value and case for passives, same footprint otherwise). Phase 2 (planned): McMaster-style family pages for mechanical parts with a variant table and "mates with" links; needs `family` and structured attributes in the library's `part.yaml`, read by the extractor straight from `parts/`.
+- **UX model (2026-10-28): DigiKey for electronic parts, McMaster-Carr for mechanical ones.** Phase 1 (done): category tiles; per-category spec columns and filters built from fields the parts already have (`Case`, `Voltage`, `Tolerance`, `Power`, `Dielectric`, AEC qualification from `Temperature_Grade`); filter counts per option; numeric sorting; filters, search and sort in the URL; value-aware search (`100n` = `0.1u`, `4k7`); one card per part on phones; part page with a summary (key specs, badges, Datasheet/DigiKey/Mouser/STEP buttons, copyable symbol and MPN), grouped specs, KiCad fields collapsed, and alternatives (same value and case for passives, same footprint otherwise). Phase 2 (done): McMaster-style family pages (`/family/<key>/`) for mechanical parts: a section per group with its picture, the specs every row shares, and a table of variants with only the attributes that differ; "mates with" links; family links on category and part pages; part pages of family members show their attributes and the rest of their group. Data: the library's `parts/families.yaml` (families, titles, group order) and a `catalog:` block per `part.yaml` (`family`, `group`, `attributes`, `mates_with`), checked by the library's `scripts/check_catalog_data.py`. The extractor needs PyYAML for it (the workflow installs `python3-yaml`; locally use the library's venv Python).
 - **Never call distributor APIs from the browser.** Stock/price data, when added, comes from a scheduled job using Actions secrets.
 
 ## Status

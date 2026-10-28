@@ -2,7 +2,7 @@
 // One page per library category, with that category's spec columns and filters.
 import Base from '../../layouts/Base.astro';
 import PartBrowser from '../../components/PartBrowser.astro';
-import { loadParts, type Part } from '../../lib/parts';
+import { loadFamilies, loadParts, type Part } from '../../lib/parts';
 import { category, columnsFor, type Category } from '../../lib/specs';
 
 export function getStaticPaths() {
@@ -15,11 +15,21 @@ export function getStaticPaths() {
 
 const { cat, parts } = Astro.props as { cat: Category; parts: Part[] };
 const base = import.meta.env.BASE_URL;
+const allFamilies = loadFamilies();
+const families = [...new Set(parts.map((p) => p.catalog?.family).filter((f): f is string => !!f && f in allFamilies))];
 ---
 
 <Base title={`${cat.label} · DropOut parts library`} description={`${parts.length} ${cat.label.toLowerCase()} in the DropOut KiCad library.`}>
 	<p class="breadcrumb"><a href={base}>All parts</a> / {cat.label}</p>
 	<h1>{cat.label}</h1>
 	<p class="muted">KiCad library <code>DropOut_{cat.key}</code></p>
+	{
+		families.length > 0 && (
+			<p class="family-links">
+				<span class="muted">Browse by family:</span>
+				{families.map((f) => <a href={`${base}family/${f}/`}>{allFamilies[f].title}</a>)}
+			</p>
+		)
+	}
 	<PartBrowser parts={parts} columns={columnsFor(cat.key)} search="local" />
 </Base>

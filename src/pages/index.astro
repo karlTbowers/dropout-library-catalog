@@ -1,7 +1,8 @@
 ---
 import Base from '../layouts/Base.astro';
 import PartBrowser from '../components/PartBrowser.astro';
-import { loadParts, asset } from '../lib/parts';
+import { loadFamilies, loadParts, asset } from '../lib/parts';
+import { groupTables } from '../lib/families';
 import { category, columnsFor } from '../lib/specs';
 
 const parts = loadParts();
@@ -15,6 +16,13 @@ const tiles = [...new Set(parts.map((p) => p.category))]
 		return { ...category(key), count: inCat.length, svg: pic?.thumb_svg ?? null };
 	})
 	.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+// Mechanical-part families (McMaster-style pages), from the library's parts/families.yaml.
+const families = Object.entries(loadFamilies())
+	.map(([key, fam]) => {
+		const tables = groupTables(key, fam, parts);
+		return { key, title: fam.title, count: tables.reduce((n, t) => n + t.parts.length, 0), svg: tables[0]?.picture ?? null };
+	})
+	.filter((f) => f.count > 0);
 ---
 
 <Base title="DropOut parts library">
@@ -31,7 +39,7 @@ const tiles = [...new Set(parts.map((p) => p.category))]
 							footprint, and 3D model.
 						</p>
 					</div>
-					<h2 id="categories" class="visually-hidden">Categories</h2>
+					<h2 id="categories">Categories</h2>
 					<ul class="tiles">
 						{tiles.map((t) => (
 							<li class="tile">
@@ -45,6 +53,24 @@ const tiles = [...new Set(parts.map((p) => p.category))]
 							</li>
 						))}
 					</ul>
+					{families.length > 0 && (
+						<>
+							<h2 id="families">Mechanical parts by family</h2>
+							<ul class="tiles">
+								{families.map((f) => (
+									<li class="tile">
+										<a href={`${base}family/${f.key}/`}>
+											{f.svg ? <img src={asset(f.svg)} alt="" loading="lazy" /> : <span />}
+											<span class="tile-text">
+												<strong>{f.title}</strong>
+												<span>{f.count} part{f.count === 1 ? '' : 's'}</span>
+											</span>
+										</a>
+									</li>
+								))}
+							</ul>
+						</>
+					)}
 					<h2>All parts</h2>
 				</div>
 				<PartBrowser parts={parts} columns={columnsFor(null)} search="site" />

@@ -25,6 +25,26 @@ export interface Part {
 	symbol_svgs: string[];
 	footprint_svg: string | null;
 	thumb_svg: string | null; // footprint drawing without the REF** text, for thumbnails
+	catalog: CatalogBlock | null; // family membership, from the part's part.yaml (mechanical parts)
+}
+
+// A part's `catalog:` block (library parts/<MPN>/part.yaml; format in parts/families.yaml there).
+export interface CatalogBlock {
+	family: string;
+	group: string;
+	attributes: Record<string, string>;
+	mates_with?: string[];
+}
+
+export interface Family {
+	title: string;
+	intro?: string;
+	groups: string[];
+}
+
+export function loadFamilies(): Record<string, Family> {
+	const file = join(process.cwd(), 'src/data/families.json');
+	return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, Family>) : {};
 }
 
 export function loadParts(): Part[] {

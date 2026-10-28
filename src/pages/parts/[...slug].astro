@@ -1,9 +1,11 @@
 ---
 // One page per part: summary with key specs and actions, drawings, 3D viewer, grouped fields,
-// and alternatives (same value and case for passives, same footprint otherwise).
+// and alternatives: the rest of its family group for mechanical parts, same value and case for
+// passives, same footprint otherwise.
 import Base from '../../layouts/Base.astro';
 import ModelViewer from '../../components/ModelViewer.astro';
-import { loadParts, asset, LIBRARY_REPO, type Part } from '../../lib/parts';
+import { loadFamilies, loadParts, asset, LIBRARY_REPO, type Part } from '../../lib/parts';
+import { byMpn, groupTables } from '../../lib/families';
 import { category, columnsFor, displayValue, keySpecs, qualification, spaceUnit } from '../../lib/specs';
 
 export function getStaticPaths() {
@@ -24,6 +26,15 @@ const stepUrl = stepPath ? `${LIBRARY_REPO}/blob/main/${stepPath}` : null;
 const qual = qualification(part);
 const specs = keySpecs(part);
 const value = displayValue(part);
+// Family (mechanical parts): its group's table supplies the summary specs and the alternatives.
+const cb = part.catalog;
+const fam = cb ? loadFamilies()[cb.family] : undefined;
+const table = cb && fam ? groupTables(cb.family, fam, parts).find((t) => t.name === cb.group) : undefined;
+const familyUrl = cb && fam ? `${base}family/${cb.family}/#${table?.slug ?? ''}` : null;
+const summary: [string, string][] = specs.length ? specs : Object.entries(cb?.attributes ?? {}).slice(0, 8);
+const inLibrary = byMpn(parts);
+const mates = cb?.mates_with ?? [];
+const groupRows = table ? table.parts.filter((p) => p.id !== part.id) : [];
 
 // Fields by group; anything not listed lands in "Other".
 type Row = [string, string | { href: string; text: string }];
@@ -32,8 +43,10 @@ const groups: [string, Row[]][] = [
 		['Manufacturer', part.manufacturer],
 		['MPN', part.mpn],
 		['Category', cat.label],
+		['Family', fam && familyUrl ? { href: familyUrl, text: `${fam.title}: ${cb!.group}` } : ''],
 		['Description', part.description],
 	]],
+	['Attributes', Object.entries(cb?.attributes ?? {})],
 	['Ratings', [
 		['Value', value],
 		['Voltage', spaceUnit(f.Voltage ?? '')],
@@ -62,7 +75,7 @@ const shownGroups = groups.map(([g, rows]) => [g, rows.filter(([, v]) => v)] as 
 
 // Alternatives: passives with the same value and case; anything else on the same footprint.
 const passive = specs.length > 0 && value && f.Case;
-const related = parts.filter((p) =>
+const related = table ? [] : parts.filter((p) =>
 	p.id !== part.id &&
 	(passive
 		? p.category === part.category && p.value === part.value && p.fields.Case === f.Case
@@ -92,9 +105,17 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 				<span class="badge">{cat.label}</span>
 			</div>
 			{
-				specs.length > 0 && (
+				fam && familyUrl && (
+					<p class="family-links">
+						<span class="muted">Family:</span>
+						<a href={familyUrl}>{fam.title}: {cb!.group}</a>
+					</p>
+				)
+			}
+			{
+				summary.length > 0 && (
 					<dl class="key-specs">
-						{specs.map(([k, v]) => (
+						{summary.map(([k, v]) => (
 							<div><dt>{k}</dt><dd>{v}</dd></div>
 						))}
 					</dl>
@@ -110,6 +131,16 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 				<p>Symbol <code>{part.id}</code><button class="copy" data-copy={part.id}>Copy</button></p>
 				{part.mpn && <p>MPN <code>{part.mpn}</code><button class="copy" data-copy={part.mpn}>Copy</button></p>}
 			</div>
+			{
+				mates.length > 0 && (
+					<p class="mates">
+						<span class="muted">Mates with </span>
+						{mates.map((m, i) => (
+							<>{i > 0 && ', '}{inLibrary.get(m) ? <a href={`${base}parts/${inLibrary.get(m)!.slug}/`}>{m}</a> : <strong>{m}</strong>}</>
+						))}
+					</p>
+				)
+			}
 			{f.Notes && <p class="notes">{f.Notes}</p>}
 		</div>
 	</div>
@@ -172,6 +203,29 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 		</table>
 	</details>
 
+	{
+		table && groupRows.length > 0 && (
+			<>
+				<h2>Other parts in {table.name}</h2>
+				<p class="muted">Compare them all on the <a href={familyUrl!}>{fam!.title}</a> page.</p>
+				<div class="table-wrap">
+					<table class="variants">
+						<thead>
+							<tr><th>Part</th>{table.columns.map((c) => <th>{c}</th>)}</tr>
+						</thead>
+						<tbody>
+							{groupRows.map((p) => (
+								<tr>
+									<td class="pn"><a href={`${base}parts/${p.slug}/`}>{p.mpn || p.name}</a></td>
+									{table.columns.map((c) => <td>{table.value(p, c)}</td>)}
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			</>
+		)
+	}
 	{
 		related.length > 0 && (
 			<>

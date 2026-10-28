@@ -9,12 +9,16 @@ Reads <library-dir>/symbols/*.kicad_sym and <library-dir>/footprints/*.pretty an
                                               footprint, 3D model path, drawing paths)
   public/parts/<Lib>/<Symbol>/symbol-<n>.svg  one drawing per symbol unit
   public/parts/<Lib>/<Symbol>/footprint.svg   the linked footprint, when it is in the library
+  public/parts/<Lib>/<Symbol>/thumb.svg       the same without REF**, cropped, for thumbnails
   public/models/<FpLib>/<Footprint>.glb       the footprint's 3D model on its pads, one per footprint
+  src/data/families.json                      catalog families for mechanical parts, from
+                                              <library-dir>/parts/families.yaml; each part's
+                                              `catalog:` block (part.yaml) lands in parts.json
 
 Drawings and models come from kicad-cli (KiCad 10). Each GLB is the footprint placed on a small
 temporary board (pads, mask, silkscreen) with its STEP model, so the model's colours are kept and
 any misalignment with the pads shows. The site build compresses them (scripts/optimize_models.mjs).
-An empty library gives an empty catalog.
+An empty library gives an empty catalog. Family data needs PyYAML (python3-yaml).
 """
 import argparse
 import json
@@ -91,6 +95,27 @@ def read_symbols(sym_file):
         fields = {p[1]: p[2] for p in children(sym, "property") if len(p) > 2}
         extends = first(sym, "extends")
         yield lib, name, fields, extends[1] if extends else None
+
+
+def read_families(lib_dir):
+    """Catalog families (parts/families.yaml) and each part's catalog block by library ref."""
+    parts_dir = os.path.join(lib_dir, "parts")
+    fam_file = os.path.join(parts_dir, "families.yaml")
+    if not os.path.exists(fam_file):
+        return {}, {}
+    try:
+        import yaml
+    except ImportError:
+        sys.exit("extract_catalog: the library has parts/families.yaml; reading it needs PyYAML (pip install pyyaml, or apt python3-yaml)")
+    families = yaml.safe_load(open(fam_file, encoding="utf-8")) or {}
+    blocks = {}
+    for d in sorted(os.listdir(parts_dir)):
+        f = os.path.join(parts_dir, d, "part.yaml")
+        if os.path.exists(f):
+            y = yaml.safe_load(open(f, encoding="utf-8")) or {}
+            if y.get("catalog") and y.get("library") and y.get("name"):
+                blocks[f"{y['library']}:{y['name']}"] = y["catalog"]
+    return families, blocks
 
 
 def footprint_model(pretty_dir, fp_name):
@@ -279,10 +304,17 @@ def main():
                     "thumb_svg": thumb_svg,
                 })
 
+    families, blocks = read_families(lib_dir)
+    for p in parts:
+        c = blocks.get(p["id"])
+        p["catalog"] = c if c and c.get("family") in families else None
     parts.sort(key=lambda p: (p["library"], p["name"]))
+    with open(os.path.join(out, "src", "data", "families.json"), "w", encoding="utf-8") as fh:
+        json.dump(families, fh, indent=1, ensure_ascii=False)
     with open(os.path.join(out, "src", "data", "parts.json"), "w", encoding="utf-8") as fh:
         json.dump(parts, fh, indent=1, ensure_ascii=False)
-    print(f"catalog: {len(parts)} part(s), {sum(1 for g in glbs.values() if g)} 3D model(s) from {len(sym_files)} symbol librar{'y' if len(sym_files) == 1 else 'ies'}")
+    print(f"catalog: {len(parts)} part(s), {sum(1 for g in glbs.values() if g)} 3D model(s) from {len(sym_files)} symbol librar{'y' if len(sym_files) == 1 else 'ies'}, "
+          f"{sum(1 for p in parts if p['catalog'])} in {len(families)} famil{'y' if len(families) == 1 else 'ies'}")
 
 
 if __name__ == "__main__":

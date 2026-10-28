@@ -30,7 +30,7 @@ const home = import.meta.env.BASE_URL;
 					<input id="site-q" name="q" type="search" value={query} placeholder="Search MPN, value, manufacturer, footprint…" autocomplete="off" />
 					<button type="submit">Search</button>
 				</form>
-				<nav class="site-nav"><a href={`${home}#categories`}>Categories</a></nav>
+				<nav class="site-nav"><a href={`${home}#categories`}>Categories</a> · <a href={`${home}#families`}>Families</a></nav>
 			</div>
 		</header>
 		<main><slot /></main>

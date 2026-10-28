@@ -1,0 +1,283 @@
+---
+// Filterable, sortable part list: facet checkboxes with live counts, spec columns per category,
+// removable filter chips, and the whole state in the URL (?q=…&mfr=TDK&case=0603&sort=value).
+// Rows are rendered at build time; the script only shows, hides, and reorders them.
+import { asset, type Part } from '../lib/parts';
+import { parseNumber, type Column } from '../lib/specs';
+
+interface Props {
+	parts: Part[];
+	columns: Column[];
+	search: 'site' | 'local'; // filter from the header search box, or from a box of its own
+}
+const { parts, columns, search } = Astro.props;
+const base = import.meta.env.BASE_URL;
+const facets = columns.filter((c) => c.facet);
+
+const sortKey = (c: Column, p: Part) => {
+	const k = c.sort ? c.sort(p) : c.value(p);
+	return typeof k === 'number' && Number.isNaN(k) ? '' : k;
+};
+// Facet options in natural order (by the column's sort key), empty values left out.
+const options = facets.map((c) => {
+	const seen = new Map<string, number | string>();
+	for (const p of parts) {
+		const v = c.value(p);
+		if (v && !seen.has(v)) seen.set(v, sortKey(c, p));
+	}
+	const vals = [...seen.entries()].sort(([a, ka], [b, kb]) =>
+		typeof ka === 'number' && typeof kb === 'number' ? ka - kb : String(a).localeCompare(String(b), 'en', { numeric: true }),
+	);
+	return { col: c, values: vals.map(([v]) => v) };
+});
+---
+
+<div class="browser" data-search={search}>
+	<details class="facets" open>
+		<summary>Filters</summary>
+		<div class="facets-head">
+			<h2>Filters</h2>
+			<button type="button" class="linkish" data-clear>Clear all</button>
+		</div>
+		{
+			options.map(({ col, values }) => (
+				<fieldset class="facet" data-facet={col.id}>
+					<legend>{col.label}</legend>
+					<div class="facet-opts">
+						{values.map((v) => (
+							<label>
+								<input type="checkbox" value={v} />
+								<span>{v}</span>
+								<span class="n" />
+							</label>
+						))}
+					</div>
+				</fieldset>
+			))
+		}
+	</details>
+
+	<section aria-label="Parts">
+		<div class="results-bar">
+			<span class="count" aria-live="polite"><span data-count>{parts.length}</span> parts</span>
+			{search === 'local' && <input type="search" data-local-q placeholder="Search within results" aria-label="Search within results" />}
+		</div>
+		<div class="chips" data-chips></div>
+		<table class="parts">
+			<thead>
+				<tr>
+					<th><span class="visually-hidden">Footprint drawing</span></th>
+					<th aria-sort="none" data-sort-col="pn"><button type="button">Part</button></th>
+					{columns.map((c) => <th aria-sort="none" data-sort-col={c.id}><button type="button">{c.label}</button></th>)}
+				</tr>
+			</thead>
+			<tbody>
+				{
+					parts.map((p, i) => {
+						const f = Object.fromEntries(facets.map((c) => [c.id, c.value(p)]));
+						const s = Object.fromEntries([['pn', p.mpn || p.name], ...columns.map((c) => [c.id, sortKey(c, p)])]);
+						const url = `${base}parts/${p.slug}/`;
+						return (
+							<tr
+								data-i={i}
+								data-f={JSON.stringify(f)}
+								data-s={JSON.stringify(s)}
+								data-v={String(parseNumber(p.value))}
+								data-text={[p.name, p.mpn, p.value, p.manufacturer, p.description, p.keywords, p.footprint, ...columns.map((c) => c.value(p))].join(' ').toLowerCase()}
+							>
+								<td class="thumb">
+									{p.thumb_svg && (
+										<a href={url} tabindex="-1" aria-hidden="true">
+											<img src={asset(p.thumb_svg)} alt="" loading="lazy" decoding="async" width="56" height="56" />
+										</a>
+									)}
+								</td>
+								<td class="pn">
+									<a href={url}>{p.mpn || p.name}</a>
+									<span class="desc">{p.description}</span>
+								</td>
+								{columns.map((c) => (
+									<td data-label={c.label} class={c.mono ? 'mono' : undefined}>{c.mono ? c.value(p).split('_').map((w, k) => (k ? <><wbr />_{w}</> : w)) : c.value(p)}</td>
+								))}
+							</tr>
+						);
+					})
+				}
+			</tbody>
+		</table>
+		<p class="no-results" data-none hidden>No parts match. <button type="button" class="linkish" data-clear>Clear filters</button></p>
+	</section>
+</div>
+
+<script>
+	// Prefix letters for value search: "100n", "0.1u", "4k7", "10k", "49.9R".
+	const SI: Record<string, number> = { p: 1e-12, n: 1e-9, u: 1e-6, µ: 1e-6, m: 1e-3, r: 1, R: 1, k: 1e3, K: 1e3, M: 1e6, G: 1e9 };
+	function tokenValue(t: string): number {
+		const m = t.match(/^(\d+(?:\.\d+)?)([pnuµmrRkKMG])(\d+)?(?:f|F|Ω|ohms?)?$/) ?? t.match(/^(\d+(?:\.\d+)?)()()(?:f|F|Ω|ohms?)$/);
+		if (!m) return NaN;
+		const n = m[3] ? Number(`${m[1]}.${m[3]}`) : Number(m[1]);
+		return n * (m[2] ? SI[m[2]] : 1);
+	}
+
+	for (const root of document.querySelectorAll<HTMLElement>('.browser')) {
+		const tbody = root.querySelector('tbody')!;
+		const rows = [...tbody.rows].map((el) => ({
+			el,
+			i: Number(el.dataset.i),
+			f: JSON.parse(el.dataset.f ?? '{}') as Record<string, string>,
+			s: JSON.parse(el.dataset.s ?? '{}') as Record<string, number | string>,
+			v: Number(el.dataset.v),
+			text: el.dataset.text ?? '',
+		}));
+		const facets = [...root.querySelectorAll<HTMLFieldSetElement>('fieldset[data-facet]')].map((fs) => ({
+			id: fs.dataset.facet!,
+			label: fs.querySelector('legend')!.textContent ?? '',
+			boxes: [...fs.querySelectorAll<HTMLInputElement>('input[type=checkbox]')],
+		}));
+		const q = (root.dataset.search === 'site'
+			? document.getElementById('site-q')
+			: root.querySelector('[data-local-q]')) as HTMLInputElement | null;
+		const intro = root.dataset.search === 'site' ? document.getElementById('home-intro') : null;
+		const countEl = root.querySelector('[data-count]')!;
+		const chips = root.querySelector<HTMLElement>('[data-chips]')!;
+		const none = root.querySelector<HTMLElement>('[data-none]')!;
+		const heads = [...root.querySelectorAll<HTMLTableCellElement>('th[data-sort-col]')];
+		let sort: { col: string; dir: 1 | -1 } | null = null;
+
+		const selected = () => Object.fromEntries(facets.map((f) => [f.id, new Set(f.boxes.filter((b) => b.checked).map((b) => b.value))]));
+
+		function textMatch(r: (typeof rows)[number], tokens: string[]) {
+			return tokens.every((t) => {
+				if (r.text.includes(t.toLowerCase())) return true;
+				const x = tokenValue(t);
+				return !Number.isNaN(x) && !Number.isNaN(r.v) && Math.abs(r.v - x) <= Math.abs(x) * 1e-6;
+			});
+		}
+
+		function apply(push = true) {
+			const tokens = (q?.value ?? '').trim().split(/\s+/).filter(Boolean);
+			const sel = selected();
+			const passes = (r: (typeof rows)[number], skip?: string) =>
+				facets.every((f) => f.id === skip || sel[f.id].size === 0 || sel[f.id].has(r.f[f.id]));
+			const textOk = rows.map((r) => textMatch(r, tokens));
+
+			let shown = 0;
+			rows.forEach((r, k) => {
+				const ok = textOk[k] && passes(r);
+				r.el.hidden = !ok;
+				if (ok) shown++;
+			});
+			countEl.textContent = String(shown);
+			none.hidden = shown > 0;
+
+			// Counts per option: what you would get by ticking it (other facets applied, this one not).
+			for (const f of facets) {
+				const n = new Map<string, number>();
+				rows.forEach((r, k) => {
+					if (textOk[k] && passes(r, f.id)) n.set(r.f[f.id], (n.get(r.f[f.id]) ?? 0) + 1);
+				});
+				for (const b of f.boxes) {
+					const c = n.get(b.value) ?? 0;
+					const label = b.closest('label')!;
+					label.querySelector('.n')!.textContent = String(c);
+					label.classList.toggle('zero', c === 0 && !b.checked);
+				}
+			}
+
+			chips.replaceChildren(
+				...facets.flatMap((f) =>
+					f.boxes.filter((b) => b.checked).map((b) => {
+						const chip = document.createElement('button');
+						chip.type = 'button';
+						chip.className = 'chip';
+						chip.setAttribute('aria-label', `Remove filter ${f.label}: ${b.value}`);
+						chip.innerHTML = '<b></b> ';
+						chip.querySelector('b')!.textContent = `${f.label}:`;
+						chip.append(b.value);
+						chip.addEventListener('click', () => {
+							b.checked = false;
+							apply();
+						});
+						return chip;
+					}),
+				),
+			);
+
+			if (intro) intro.hidden = tokens.length > 0 || facets.some((f) => sel[f.id].size > 0);
+			if (push) saveUrl(sel);
+		}
+
+		function order() {
+			const sorted = [...rows];
+			if (sort) {
+				const { col, dir } = sort;
+				sorted.sort((a, b) => {
+					const x = a.s[col], y = b.s[col];
+					if (x === '' || x == null) return 1; // blanks last either way
+					if (y === '' || y == null) return -1;
+					const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'en', { numeric: true });
+					return c * dir || a.i - b.i;
+				});
+			} else sorted.sort((a, b) => a.i - b.i);
+			tbody.append(...sorted.map((r) => r.el));
+			for (const h of heads) h.setAttribute('aria-sort', sort?.col === h.dataset.sortCol ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none');
+		}
+
+		function saveUrl(sel: Record<string, Set<string>>) {
+			const u = new URL(location.href);
+			for (const f of facets) u.searchParams.delete(f.id);
+			for (const f of facets) for (const v of sel[f.id]) u.searchParams.append(f.id, v);
+			const text = q?.value.trim() ?? '';
+			text ? u.searchParams.set('q', text) : u.searchParams.delete('q');
+			sort ? u.searchParams.set('sort', `${sort.col}${sort.dir === -1 ? ':desc' : ''}`) : u.searchParams.delete('sort');
+			history.replaceState(null, '', u);
+		}
+
+		function loadUrl() {
+			const u = new URL(location.href);
+			for (const f of facets) {
+				const want = new Set(u.searchParams.getAll(f.id));
+				for (const b of f.boxes) b.checked = want.has(b.value);
+			}
+			if (q && u.searchParams.has('q')) q.value = u.searchParams.get('q') ?? '';
+			const s = u.searchParams.get('sort');
+			if (s) {
+				const [col, d] = s.split(':');
+				if (heads.some((h) => h.dataset.sortCol === col)) sort = { col, dir: d === 'desc' ? -1 : 1 };
+			}
+		}
+
+		root.addEventListener('change', (e) => {
+			if ((e.target as HTMLElement).matches('input[type=checkbox]')) apply();
+		});
+		q?.addEventListener('input', () => apply());
+		if (root.dataset.search === 'site') q?.form?.addEventListener('submit', (e) => {
+			e.preventDefault();
+			apply();
+			root.scrollIntoView({ block: 'start' });
+		});
+		for (const b of root.querySelectorAll('[data-clear]'))
+			b.addEventListener('click', () => {
+				for (const f of facets) for (const x of f.boxes) x.checked = false;
+				if (q) q.value = '';
+				apply();
+			});
+		for (const h of heads)
+			h.querySelector('button')!.addEventListener('click', () => {
+				const col = h.dataset.sortCol!;
+				sort = sort?.col !== col ? { col, dir: 1 } : sort.dir === 1 ? { col, dir: -1 } : null;
+				order();
+				saveUrl(selected());
+			});
+		// Filters collapse into a disclosure on narrow screens.
+		const details = root.querySelector('details.facets') as HTMLDetailsElement;
+		const narrow = matchMedia('(max-width: 860px)');
+		const syncOpen = () => (details.open = !narrow.matches);
+		narrow.addEventListener('change', syncOpen);
+		syncOpen();
+
+		loadUrl();
+		order();
+		apply(false);
+	}
+</script>

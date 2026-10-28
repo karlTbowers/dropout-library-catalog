@@ -1,0 +1,25 @@
+---
+// One page per library category, with that category's spec columns and filters.
+import Base from '../../layouts/Base.astro';
+import PartBrowser from '../../components/PartBrowser.astro';
+import { loadParts, type Part } from '../../lib/parts';
+import { category, columnsFor, type Category } from '../../lib/specs';
+
+export function getStaticPaths() {
+	const parts = loadParts();
+	return [...new Set(parts.map((p) => p.category))].map((key) => {
+		const cat = category(key);
+		return { params: { cat: cat.slug }, props: { cat, parts: parts.filter((p) => p.category === key) } };
+	});
+}
+
+const { cat, parts } = Astro.props as { cat: Category; parts: Part[] };
+const base = import.meta.env.BASE_URL;
+---
+
+<Base title={`${cat.label} · DropOut parts library`} description={`${parts.length} ${cat.label.toLowerCase()} in the DropOut KiCad library.`}>
+	<p class="breadcrumb"><a href={base}>All parts</a> / {cat.label}</p>
+	<h1>{cat.label}</h1>
+	<p class="muted">KiCad library <code>DropOut_{cat.key}</code></p>
+	<PartBrowser parts={parts} columns={columnsFor(cat.key)} search="local" />
+</Base>

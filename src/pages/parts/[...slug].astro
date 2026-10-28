@@ -1,32 +1,120 @@
 ---
-// One page per part: drawings, every field, distributor links, copyable library reference.
+// One page per part: summary with key specs and actions, drawings, 3D viewer, grouped fields,
+// and alternatives (same value and case for passives, same footprint otherwise).
 import Base from '../../layouts/Base.astro';
 import ModelViewer from '../../components/ModelViewer.astro';
 import { loadParts, asset, LIBRARY_REPO, type Part } from '../../lib/parts';
+import { category, columnsFor, displayValue, keySpecs, qualification, spaceUnit } from '../../lib/specs';
 
 export function getStaticPaths() {
-	return loadParts().map((part) => ({ params: { slug: part.slug }, props: { part } }));
+	const parts = loadParts();
+	return parts.map((part) => ({ params: { slug: part.slug }, props: { part, parts } }));
 }
 
-const { part } = Astro.props as { part: Part };
+const { part, parts } = Astro.props as { part: Part; parts: Part[] };
+const base = import.meta.env.BASE_URL;
+const cat = category(part.category);
+const f = part.fields;
 const link = (pn: string) => (pn && pn !== '-' ? pn : null);
 const digikey = link(part.digikey_pn);
 const mouser = link(part.mouser_pn);
-const shown = ['Reference', 'Value', 'Footprint', 'Datasheet', 'Description', 'Manufacturer', 'MPN', 'DigiKey_PN', 'Mouser_PN'];
-const otherFields = Object.entries(part.fields).filter(([k]) => !shown.includes(k));
+const datasheet = part.datasheet && part.datasheet !== '~' ? part.datasheet : null;
 const stepPath = part.model?.replace(/^\$\{KIPRJMOD\}\/lib\/dropout-kicad-library\//, '');
 const stepUrl = stepPath ? `${LIBRARY_REPO}/blob/main/${stepPath}` : null;
+const qual = qualification(part);
+const specs = keySpecs(part);
+const value = displayValue(part);
+
+// Fields by group; anything not listed lands in "Other".
+type Row = [string, string | { href: string; text: string }];
+const groups: [string, Row[]][] = [
+	['Overview', [
+		['Manufacturer', part.manufacturer],
+		['MPN', part.mpn],
+		['Category', cat.label],
+		['Description', part.description],
+	]],
+	['Ratings', [
+		['Value', value],
+		['Voltage', spaceUnit(f.Voltage ?? '')],
+		['Tolerance', spaceUnit(f.Tolerance ?? '')],
+		['Power', spaceUnit(f.Power ?? '')],
+		['Dielectric', f.Dielectric ?? ''],
+		['Temperature / grade', f.Temperature_Grade ?? ''],
+	]],
+	['Package', [
+		['Case', f.Case ?? ''],
+		['Footprint', part.footprint],
+		['3D model', stepUrl ? { href: stepUrl, text: 'STEP' } : ''],
+	]],
+	['Sourcing', [
+		['DigiKey', digikey ? { href: `https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(digikey)}`, text: digikey } : 'Not stocked'],
+		['Mouser', mouser ? { href: `https://www.mouser.com/c/?q=${encodeURIComponent(mouser)}`, text: mouser } : 'Not stocked'],
+		['Datasheet', datasheet ? { href: datasheet, text: 'PDF / web page' } : ''],
+		['Reference manual', f.Reference_Manual ? { href: f.Reference_Manual, text: 'Link' } : ''],
+	]],
+];
+const known = new Set(['Reference', 'Value', 'Footprint', 'Datasheet', 'Description', 'Manufacturer', 'MPN', 'DigiKey_PN', 'Mouser_PN',
+	'Voltage', 'Tolerance', 'Power', 'Dielectric', 'Temperature_Grade', 'Case', 'Reference_Manual', 'Notes', 'ki_keywords', 'ki_fp_filters']);
+const other: Row[] = Object.entries(f).filter(([k]) => !known.has(k)).map(([k, v]) => [k.replace(/_/g, ' '), v]);
+if (other.length) groups.push(['Other', other]);
+const shownGroups = groups.map(([g, rows]) => [g, rows.filter(([, v]) => v)] as [string, Row[]]).filter(([, rows]) => rows.length);
+
+// Alternatives: passives with the same value and case; anything else on the same footprint.
+const passive = specs.length > 0 && value && f.Case;
+const related = parts.filter((p) =>
+	p.id !== part.id &&
+	(passive
+		? p.category === part.category && p.value === part.value && p.fields.Case === f.Case
+		: part.footprint && p.footprint === part.footprint),
+);
+const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 ---
 
-<Base title={`${part.mpn || part.name} · DropOut library`} description={part.description}>
-	<p class="muted"><a href={import.meta.env.BASE_URL}>Catalog</a> / {part.category}</p>
-	<h1>{part.mpn || part.name}</h1>
-	<p>{part.description}</p>
-	<p>
-		Library reference <code>{part.id}</code><button class="copy" data-copy={part.id}>Copy</button>
-		{part.mpn && <>· MPN <code>{part.mpn}</code><button class="copy" data-copy={part.mpn}>Copy</button></>}
-	</p>
+<Base title={`${part.mpn || part.name} · ${part.manufacturer} · DropOut parts library`} description={part.description}>
+	<p class="breadcrumb"><a href={base}>All parts</a> / <a href={`${base}category/${cat.slug}/`}>{cat.label}</a> / {part.mpn || part.name}</p>
 
+	<div class="part-head">
+		<div class="part-media">
+			{
+				part.thumb_svg ? <img src={asset(part.thumb_svg)} alt={`Footprint ${part.footprint}`} />
+				: part.symbol_svgs[0] ? <img src={asset(part.symbol_svgs[0])} alt={`Symbol ${part.name}`} />
+				: null
+			}
+		</div>
+		<div>
+			<p class="part-mfr">{part.manufacturer}</p>
+			<h1>{part.mpn || part.name}</h1>
+			<p class="part-desc">{part.description}</p>
+			<div class="badges">
+				<span class={qual.startsWith('AEC') ? 'badge ok' : 'badge'}>{qual}</span>
+				{f.Case && <span class="badge">{f.Case}</span>}
+				<span class="badge">{cat.label}</span>
+			</div>
+			{
+				specs.length > 0 && (
+					<dl class="key-specs">
+						{specs.map(([k, v]) => (
+							<div><dt>{k}</dt><dd>{v}</dd></div>
+						))}
+					</dl>
+				)
+			}
+			<div class="actions">
+				{datasheet && <a class="btn primary" href={datasheet}>Datasheet</a>}
+				{digikey && <a class="btn" href={`https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(digikey)}`}>DigiKey</a>}
+				{mouser && <a class="btn" href={`https://www.mouser.com/c/?q=${encodeURIComponent(mouser)}`}>Mouser</a>}
+				{stepUrl && <a class="btn" href={stepUrl}>STEP model</a>}
+			</div>
+			<div class="use-box">
+				<p>Symbol <code>{part.id}</code><button class="copy" data-copy={part.id}>Copy</button></p>
+				{part.mpn && <p>MPN <code>{part.mpn}</code><button class="copy" data-copy={part.mpn}>Copy</button></p>}
+			</div>
+			{f.Notes && <p class="notes">{f.Notes}</p>}
+		</div>
+	</div>
+
+	<h2>Drawings</h2>
 	<div class="drawings">
 		{
 			part.symbol_svgs.map((svg, i) => (
@@ -46,21 +134,65 @@ const stepUrl = stepPath ? `${LIBRARY_REPO}/blob/main/${stepPath}` : null;
 		}
 	</div>
 
-	{part.footprint && <ModelViewer glb={part.model_glb} footprint={part.footprint} step={stepUrl} />}
+	{part.footprint && <><h2>3D model</h2><ModelViewer glb={part.model_glb} footprint={part.footprint} step={stepUrl} /></>}
 
-	<div class="table-wrap">
-		<table>
+	<h2>Specifications</h2>
+	<div class="spec-groups">
+		{
+			shownGroups.map(([g, rows]) => (
+				<section>
+					<h3>{g}</h3>
+					<table class="spec">
+						<tbody>
+							{rows.map(([k, v]) => (
+								<tr>
+									<th>{k}</th>
+									<td class={k === 'Footprint' || k === 'MPN' ? 'mono' : undefined}>
+										{typeof v === 'string' ? v : <a href={v.href}>{v.text}</a>}
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</section>
+			))
+		}
+	</div>
+	<details class="kicad">
+		<summary>KiCad details</summary>
+		<table class="spec">
 			<tbody>
-				<tr><th>Manufacturer</th><td>{part.manufacturer}</td></tr>
-				<tr><th>MPN</th><td class="mono">{part.mpn}</td></tr>
-				<tr><th>Value</th><td>{part.value}</td></tr>
+				<tr><th>Library reference</th><td class="mono">{part.id}</td></tr>
+				<tr><th>Reference designator</th><td class="mono">{f.Reference}</td></tr>
+				<tr><th>Value field</th><td class="mono">{part.value}</td></tr>
 				<tr><th>Footprint</th><td class="mono">{part.footprint}</td></tr>
-				<tr><th>Datasheet</th><td>{part.datasheet && part.datasheet !== '~' ? <a href={part.datasheet}>{part.datasheet}</a> : '—'}</td></tr>
-				<tr><th>DigiKey</th><td>{digikey ? <a href={`https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(digikey)}`}>{digikey}</a> : 'Not stocked'}</td></tr>
-				<tr><th>Mouser</th><td>{mouser ? <a href={`https://www.mouser.com/c/?q=${encodeURIComponent(mouser)}`}>{mouser}</a> : 'Not stocked'}</td></tr>
-				<tr><th>3D model</th><td>{stepUrl ? <a href={stepUrl}>Download STEP</a> : '—'}</td></tr>
-				{otherFields.map(([k, v]) => <tr><th>{k}</th><td>{v}</td></tr>)}
+				{f.ki_keywords && <tr><th>Keywords</th><td>{f.ki_keywords}</td></tr>}
+				{f.ki_fp_filters && <tr><th>Footprint filters</th><td class="mono">{f.ki_fp_filters}</td></tr>}
 			</tbody>
 		</table>
-	</div>
+	</details>
+
+	{
+		related.length > 0 && (
+			<>
+				<h2>{passive ? `Alternatives: ${value}, ${f.Case}` : 'Other parts on this footprint'}</h2>
+				<div class="table-wrap">
+					<table class="related">
+						<thead>
+							<tr><th>Part</th>{relCols.map((c) => <th>{c.label}</th>)}{!passive && <th>Description</th>}</tr>
+						</thead>
+						<tbody>
+							{related.map((p) => (
+								<tr>
+									<td class="mono"><a href={`${base}parts/${p.slug}/`}>{p.mpn || p.name}</a></td>
+									{relCols.map((c) => <td>{c.value(p)}</td>)}
+									{!passive && <td class="desc">{p.description}</td>}
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			</>
+		)
+	}
 </Base>

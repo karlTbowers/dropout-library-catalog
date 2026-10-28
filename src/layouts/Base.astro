@@ -1,11 +1,13 @@
 ---
 import '../styles/tokens.css';
+import { LIBRARY_REPO } from '../lib/parts';
 
 interface Props {
 	title: string;
 	description?: string;
+	query?: string; // prefill for the header search
 }
-const { title, description = 'Catalog of the DropOut KiCad library: symbols, footprints, and 3D models.' } = Astro.props;
+const { title, description = 'Catalog of the DropOut KiCad library: symbols, footprints, and 3D models.', query = '' } = Astro.props;
 const home = import.meta.env.BASE_URL;
 ---
 
@@ -19,8 +21,24 @@ const home = import.meta.env.BASE_URL;
 		<title>{title}</title>
 	</head>
 	<body>
-		<header class="site"><a href={home}>DropOut library catalog</a></header>
+		<header class="site">
+			<div class="site-inner">
+				<a class="wordmark" href={home}>DropOut<span>Parts library</span></a>
+				<!-- Searches every part. On the home page the results filter as you type. -->
+				<form class="site-search" role="search" action={home} method="get">
+					<label class="visually-hidden" for="site-q">Search parts</label>
+					<input id="site-q" name="q" type="search" value={query} placeholder="Search MPN, value, manufacturer, footprint…" autocomplete="off" />
+					<button type="submit">Search</button>
+				</form>
+				<nav class="site-nav"><a href={`${home}#categories`}>Categories</a></nav>
+			</div>
+		</header>
 		<main><slot /></main>
+		<footer class="site">
+			<div>
+				Built from <a href={LIBRARY_REPO}>dropout-kicad-library</a>. Boards use it as a submodule at <code>lib/dropout-kicad-library</code>.
+			</div>
+		</footer>
 		<script>
 			// Copy buttons: <button class="copy" data-copy="text">
 			document.addEventListener('click', async (e) => {
@@ -32,6 +50,13 @@ const home = import.meta.env.BASE_URL;
 					b.textContent = 'Copied';
 					setTimeout(() => (b.textContent = t), 1200);
 				} catch {}
+			});
+			// "/" jumps to the search box, as on most parts sites
+			document.addEventListener('keydown', (e) => {
+				const t = e.target as HTMLElement;
+				if (e.key !== '/' || e.metaKey || e.ctrlKey || t.closest('input, textarea, select, [contenteditable]')) return;
+				e.preventDefault();
+				document.getElementById('site-q')?.focus();
 			});
 		</script>
 	</body>

@@ -101,6 +101,57 @@ def footprint_model(pretty_dir, fp_name):
     return model[1] if model else None
 
 
+def crop_svg(svg_file, margin=0.3):
+    """Shrink a footprint SVG's page to what is drawn on it (plus a margin, in mm).
+
+    kicad-cli plots a footprint centred on a page sized for its text fields, so an 0402 sits in
+    a 15 mm wide image and shows tiny in thumbnails. Used for thumb.svg only; footprint.svg
+    keeps KiCad's page so its REF** text stays in proportion. Its plots use only absolute M/L/Z paths and
+    circles, so the drawn extent is exact; the hidden <text> search overlay is ignored. Leaves
+    the file alone if it finds anything else."""
+    s = open(svg_file, encoding="utf-8").read()
+    xs, ys = [], []
+    for d in re.findall(r'\sd="([^"]*)"', s):
+        if re.search(r"[A-KN-Ya-z]", d):  # a command other than M, L, Z
+            return
+        nums = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", d)]
+        xs += nums[0::2]
+        ys += nums[1::2]
+    for cx, cy, r in re.findall(r'<circle cx="(-?[\d.]+)" cy="(-?[\d.]+)" r="([\d.]+)"', s):
+        xs += [float(cx) - float(r), float(cx) + float(r)]
+        ys += [float(cy) - float(r), float(cy) + float(r)]
+    if not xs:
+        return
+    pad = margin + max([float(w) for w in re.findall(r"stroke-width:([\d.]+)", s)] or [0]) / 2
+    x0, y0 = min(xs) - pad, min(ys) - pad
+    w, h = max(xs) + pad - x0, max(ys) + pad - y0
+    s = re.sub(r'width="[\d.]+mm" height="[\d.]+mm" viewBox="[^"]*"',
+               f'width="{w:.4f}mm" height="{h:.4f}mm" viewBox="{x0:.4f} {y0:.4f} {w:.4f} {h:.4f}"', s, count=1)
+    open(svg_file, "w", encoding="utf-8").write(s)
+
+
+def export_thumb(cli, pretty_dir, fp_name, out_file, tmp):
+    """Footprint drawing for thumbnails: as footprint.svg, but without the REF** text, which
+    dwarfs small parts. Plotted from a copy of the footprint with its Reference field hidden."""
+    src = open(os.path.join(pretty_dir, f"{fp_name}.kicad_mod"), encoding="utf-8").read()
+    hidden, n = re.subn(r'(\(property "Reference" "[^"]*")', r"\1 (hide yes)", src, count=1)
+    if not n:
+        return False
+    lib = os.path.join(tmp, "thumb.pretty")
+    export = os.path.join(tmp, "thumb")
+    for d in (lib, export):
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d)
+    open(os.path.join(lib, f"{fp_name}.kicad_mod"), "w", encoding="utf-8").write(hidden)
+    r = subprocess.run([cli, "fp", "export", "svg", "--fp", fp_name, "-l", FP_LAYERS, "-o", export, lib], capture_output=True)
+    svg = os.path.join(export, f"{fp_name}.svg")
+    if r.returncode or not os.path.exists(svg):
+        return False
+    shutil.copy(svg, out_file)
+    crop_svg(out_file)
+    return True
+
+
 POINT = re.compile(r"\((?:start|end|mid|center|xy|at) (-?[\d.]+) (-?[\d.]+)")
 
 
@@ -180,7 +231,7 @@ def main():
 
                 # footprint drawing, when the footprint is in this library
                 footprint = fields.get("Footprint", "")
-                fp_svg = model = glb = None
+                fp_svg = thumb_svg = model = glb = None
                 if ":" in footprint:
                     fp_lib, fp_name = footprint.split(":", 1)
                     pretty = os.path.join(fp_dir, f"{fp_lib}.pretty")
@@ -192,6 +243,8 @@ def main():
                                        check=True, capture_output=True)
                         shutil.copy(os.path.join(export, f"{fp_name}.svg"), os.path.join(dest, "footprint.svg"))
                         fp_svg = f"{base}/footprint.svg"
+                        thumb = export_thumb(cli, pretty, fp_name, os.path.join(dest, "thumb.svg"), tmp)
+                        thumb_svg = f"{base}/thumb.svg" if thumb else fp_svg
                         model = footprint_model(pretty, fp_name)
                         if footprint not in glbs:
                             glbs[footprint] = None
@@ -223,6 +276,7 @@ def main():
                     "fields": fields,
                     "symbol_svgs": units,
                     "footprint_svg": fp_svg,
+                    "thumb_svg": thumb_svg,
                 })
 
     parts.sort(key=lambda p: (p["library"], p["name"]))

@@ -24,6 +24,7 @@ export interface Part {
 	fields: Record<string, string>;
 	symbol_svgs: string[];
 	footprint_svg: string | null;
+	thumb_svg: string | null; // footprint drawing without the REF** text, for thumbnails
 }
 
 export function loadParts(): Part[] {

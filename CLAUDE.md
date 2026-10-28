@@ -10,11 +10,15 @@ It is a separate repo so the library stays lean: every board mounts the library 
 
 ```
 scripts/extract_catalog.py     reads a library checkout → src/data/parts.json + public/parts/<Lib>/<Symbol>/*.svg
+                               (symbol-<n>.svg, footprint.svg, and thumb.svg: the footprint without REF**, cropped)
                                + public/models/<FpLib>/<Footprint>.glb (one per footprint with a model)
 scripts/optimize_models.mjs    `npm run models`: compresses those GLBs in place (gltf-transform, meshopt)
 src/components/ModelViewer.astro  3D viewer (three.js), or a "no 3D model" panel
 src/lib/parts.ts               loads parts.json (empty catalog if absent)
-src/pages/index.astro          catalog: search + category and manufacturer filters, one row per part
+src/lib/specs.ts               category names, spec columns and filters per category, value parsing (4.7uF, 4k7, 1/16W)
+src/components/PartBrowser.astro  filter sidebar with live counts, sortable columns, chips, state in the URL, cards on phones
+src/pages/index.astro          home: category tiles + all parts, filtered by the header search as you type
+src/pages/category/[cat].astro one page per library category with its spec columns and filters
 src/pages/parts/[...slug].astro  part page: drawings, 3D viewer, field table, datasheet/DigiKey/Mouser, copy buttons, STEP link
 src/styles/tokens.css          every colour and font as a CSS token (light and dark)
 .github/workflows/catalog.yml  extract (kicad/kicad:10.0) → build (Node: models, astro) → deploy (Pages)
@@ -50,6 +54,7 @@ npm ci && npm run models && npm run dev   # http://localhost:4321/dropout-librar
 - **No DropOut branding exists yet.** Clean, neutral engineering-datasheet look, light and dark modes, all colours and fonts as tokens in `src/styles/tokens.css` so branding can drop in later.
 - **Catalog page:** search plus filters (category, manufacturer, package); one row per part.
 - **Part page:** symbol and footprint SVGs side by side; full field table; datasheet, DigiKey, and Mouser links; copy buttons for MPN and library reference (`DropOut_Power:LM74910H-Q1`); 3D viewer.
+- **UX model (2026-10-28): DigiKey for electronic parts, McMaster-Carr for mechanical ones.** Phase 1 (done): category tiles; per-category spec columns and filters built from fields the parts already have (`Case`, `Voltage`, `Tolerance`, `Power`, `Dielectric`, AEC qualification from `Temperature_Grade`); filter counts per option; numeric sorting; filters, search and sort in the URL; value-aware search (`100n` = `0.1u`, `4k7`); one card per part on phones; part page with a summary (key specs, badges, Datasheet/DigiKey/Mouser/STEP buttons, copyable symbol and MPN), grouped specs, KiCad fields collapsed, and alternatives (same value and case for passives, same footprint otherwise). Phase 2 (planned): McMaster-style family pages for mechanical parts with a variant table and "mates with" links; needs `family` and structured attributes in the library's `part.yaml`, read by the extractor straight from `parts/`.
 - **Never call distributor APIs from the browser.** Stock/price data, when added, comes from a scheduled job using Actions secrets.
 
 ## Status
@@ -57,7 +62,7 @@ npm ci && npm run models && npm run dev   # http://localhost:4321/dropout-librar
 Done (2026-10-22): 3D viewer (see decision above). Skeleton: extraction of fields and symbol/footprint SVGs (footprint drawings plot F.Cu, B.Cu, F.Mask, F.SilkS, F.CrtYd), catalog page with search and filters, part page with drawings, fields, links, copy buttons, and a STEP download link; workflow with dispatch, nightly, and Pages deploy. Tested on a one-part sample library and on the empty library.
 
 To do, alongside the first real parts:
-1. **Package filter** on the catalog page (needs a package field or footprint-derived package).
+1. **Package filter** for categories without a `Case` field (needs a package field or footprint-derived package).
 2. **Pagefind** static search once the catalog outgrows the client-side filter.
 3. **Later:** "used in" board links, nightly DigiKey/Mouser stock and price snapshot, per-part changelog from library git history.
 

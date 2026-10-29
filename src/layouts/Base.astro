@@ -40,16 +40,26 @@ const home = import.meta.env.BASE_URL;
 			</div>
 		</footer>
 		<script>
-			// Copy buttons: <button class="copy" data-copy="text">
+			// Copy buttons: <button data-copy="text" [data-copied="label shown after copying"]>
 			document.addEventListener('click', async (e) => {
-				const b = (e.target as HTMLElement).closest('button.copy') as HTMLButtonElement | null;
+				const b = (e.target as HTMLElement).closest('button[data-copy]') as HTMLButtonElement | null;
 				if (!b) return;
+				const text = b.dataset.copy ?? '';
+				let ok = true;
 				try {
-					await navigator.clipboard.writeText(b.dataset.copy ?? '');
-					const t = b.textContent;
-					b.textContent = 'Copied';
-					setTimeout(() => (b.textContent = t), 1200);
-				} catch {}
+					await navigator.clipboard.writeText(text);
+				} catch {
+					// Clipboard API refused (some embedded browsers): fall back to a selected textarea
+					const ta = Object.assign(document.createElement('textarea'), { value: text });
+					ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+					document.body.append(ta);
+					ta.select();
+					ok = document.execCommand('copy');
+					ta.remove();
+				}
+				const t = b.textContent;
+				b.textContent = ok ? (b.dataset.copied ?? 'Copied') : 'Copy failed';
+				setTimeout(() => (b.textContent = t), ok && b.dataset.copied ? 2500 : 1200);
 			});
 			// "/" jumps to the search box, as on most parts sites
 			document.addEventListener('keydown', (e) => {

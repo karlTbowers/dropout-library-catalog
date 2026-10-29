@@ -122,11 +122,20 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 				)
 			}
 			<div class="actions">
-				{datasheet && <a class="btn primary" href={datasheet}>Datasheet</a>}
+				{
+					part.schematic && (
+						<button class="btn primary" data-copy={part.schematic} data-copied="Copied: paste in KiCad"
+							title="Copies the symbol with its footprint and fields; paste it in KiCad 10's Schematic Editor (Ctrl+V / Cmd+V)">
+							Copy to schematic
+						</button>
+					)
+				}
+				{datasheet && <a class={part.schematic ? 'btn' : 'btn primary'} href={datasheet}>Datasheet</a>}
 				{digikey && <a class="btn" href={`https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(digikey)}`}>DigiKey</a>}
 				{mouser && <a class="btn" href={`https://www.mouser.com/c/?q=${encodeURIComponent(mouser)}`}>Mouser</a>}
 				{stepUrl && <a class="btn" href={stepUrl}>STEP model</a>}
 			</div>
+			{part.schematic && <p class="muted paste-hint">Copy to schematic, then paste in KiCad 10's Schematic Editor (Ctrl+V or Cmd+V) to place it with its footprint and fields.</p>}
 			<div class="use-box">
 				<p>Symbol <code>{part.id}</code><button class="copy" data-copy={part.id}>Copy</button></p>
 				{part.mpn && <p>MPN <code>{part.mpn}</code><button class="copy" data-copy={part.mpn}>Copy</button></p>}

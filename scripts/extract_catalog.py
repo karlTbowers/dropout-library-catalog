@@ -11,6 +11,8 @@ Reads <library-dir>/symbols/*.kicad_sym and <library-dir>/footprints/*.pretty an
   public/parts/<Lib>/<Symbol>/footprint.svg   the linked footprint, when it is in the library
   public/parts/<Lib>/<Symbol>/thumb.svg       the same without REF**, cropped, for thumbnails
   public/models/<FpLib>/<Footprint>.glb       the footprint's 3D model on its pads, one per footprint
+                                              (each parts.json entry also carries `schematic`, the
+                                              part as KiCad clipboard text for "Copy to schematic")
   src/data/families.json                      catalog families for mechanical parts, from
                                               <library-dir>/parts/families.yaml; each part's
                                               `catalog:` block (part.yaml) lands in parts.json
@@ -28,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 
 
 # Footprint drawing layers: pads, silkscreen, courtyard (the fab layer's large value text hides small pads)
@@ -51,6 +54,10 @@ MODEL_PREFIX = "${KIPRJMOD}/lib/dropout-kicad-library/"
 TOKEN = re.compile(r'\s*(?:(\()|(\))|"((?:[^"\\]|\\.)*)"|([^\s()"]+))')
 
 
+class Quoted(str):
+    """A string that was quoted in the source, so dump_sexpr() quotes it again."""
+
+
 def parse_sexpr(text):
     stack, cur = [], []
     pos = 0
@@ -66,10 +73,24 @@ def parse_sexpr(text):
             done, cur = cur, stack.pop()
             cur.append(done)
         elif m.group(3) is not None:
-            cur.append(m.group(3).replace('\\"', '"').replace("\\\\", "\\"))
+            cur.append(Quoted(m.group(3).replace('\\"', '"').replace("\\\\", "\\")))
         else:
             cur.append(m.group(4))
     return cur[0] if cur else []
+
+
+def dump_sexpr(node, depth=0):
+    """Write a parsed tree back out in KiCad's layout (tabs, one list per line)."""
+    if not isinstance(node, list):
+        return '"' + node.replace("\\", "\\\\").replace('"', '\\"') + '"' if isinstance(node, Quoted) else node
+    tab = "\t" * depth
+    if not any(isinstance(c, list) for c in node):
+        return tab + "(" + " ".join(dump_sexpr(c) for c in node) + ")"
+    out = tab + "(" + " ".join(dump_sexpr(c) for c in node if not isinstance(c, list))
+    for c in node:
+        if isinstance(c, list):
+            out += "\n" + dump_sexpr(c, depth + 1)
+    return out + "\n" + tab + ")"
 
 
 def children(node, tag):
@@ -94,7 +115,38 @@ def read_symbols(sym_file):
         name = sym[1]
         fields = {p[1]: p[2] for p in children(sym, "property") if len(p) > 2}
         extends = first(sym, "extends")
-        yield lib, name, fields, extends[1] if extends else None
+        yield lib, name, fields, extends[1] if extends else None, sym
+
+
+def num(v):
+    return f"{v:.4f}".rstrip("0").rstrip(".") or "0"
+
+
+def schematic_snippet(lib, sym, x=101.6, y=101.6):
+    """The symbol as KiCad Schematic Editor clipboard text: what its own Copy writes (KiCad 10,
+    SCH_IO_KICAD_SEXPR::Format for the clipboard), a lib_symbols block with the definition under
+    its schematic name "<lib>:<name>", then one placed symbol, with no kicad_sch wrapper. Paste
+    reads that (LoadContent); anything else it pastes as a text item. The placed symbol has no
+    instances block, so Paste takes the reference from its fields and annotates it like any
+    pasted part. Multi-unit symbols place unit 1."""
+    lib_id = Quoted(f"{lib}:{sym[1]}")
+    cached = [lib_id if i == 1 else c for i, c in enumerate(sym)]
+    placed = ["symbol", ["lib_id", lib_id], ["at", num(x), num(y), "0"], ["unit", "1"], ["body_style", "1"]]
+    for flag in ("exclude_from_sim", "in_bom", "on_board", "in_pos_files"):
+        placed += children(sym, flag)
+    placed += [["dnp", "no"], ["uuid", Quoted(str(uuid.uuid4()))]]
+    for prop in children(sym, "property"):
+        at = first(prop, "at")
+        # Library Y points up, schematic Y down; KiCad 10 schematics keep (hide yes) in effects
+        text = Quoted(prop[2] + "?") if prop[1] == "Reference" else prop[2]  # unannotated, as in KiCad
+        field = ["property", prop[1], text, ["at", num(x + float(at[1])), num(y - float(at[2])), at[3]]]
+        effects = [list(e) for e in children(prop, "effects")]
+        if first(prop, "hide") and effects:
+            effects[0].append(["hide", "yes"])
+        placed.append(field + effects)
+    pins = sorted({n[1] for unit in children(sym, "symbol") for pin in children(unit, "pin") for n in children(pin, "number")})
+    placed += [["pin", Quoted(n), ["uuid", Quoted(str(uuid.uuid4()))]] for n in pins]
+    return dump_sexpr(["lib_symbols", cached]) + "\n" + dump_sexpr(placed) + "\n"
 
 
 def read_families(lib_dir):
@@ -238,7 +290,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         for f in sym_files:
             sym_path = os.path.join(sym_dir, f)
-            for lib, name, fields, extends in read_symbols(sym_path):
+            for lib, name, fields, extends, sym in read_symbols(sym_path):
                 base = f"parts/{slug(lib)}/{slug(name)}"
                 dest = os.path.join(out, "public", base)
                 os.makedirs(dest, exist_ok=True)
@@ -302,6 +354,8 @@ def main():
                     "symbol_svgs": units,
                     "footprint_svg": fp_svg,
                     "thumb_svg": thumb_svg,
+                    # derived symbols would need flattening into their parent first; none exist yet
+                    "schematic": None if extends else schematic_snippet(lib, sym),
                 })
 
     families, blocks = read_families(lib_dir)

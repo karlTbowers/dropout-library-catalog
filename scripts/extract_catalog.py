@@ -11,6 +11,7 @@ Reads <library-dir>/symbols/*.kicad_sym and <library-dir>/footprints/*.pretty an
   public/parts/<Lib>/<Symbol>/footprint.svg   the linked footprint, when it is in the library
   public/parts/<Lib>/<Symbol>/thumb.svg       the same without REF**, cropped, for thumbnails
   public/models/<FpLib>/<Footprint>.glb       the footprint's 3D model on its pads, one per footprint
+  public/models/parts/<Lib>/<Symbol>.glb      the 3D model of a part not placed on the PCB (no footprint)
                                               (each parts.json entry also carries `schematic`, the
                                               part as KiCad clipboard text for "Copy to schematic")
   src/data/families.json                      catalog families for mechanical parts, from
@@ -19,7 +20,9 @@ Reads <library-dir>/symbols/*.kicad_sym and <library-dir>/footprints/*.pretty an
 
 Drawings and models come from kicad-cli (KiCad 10). Each GLB is the footprint placed on a small
 temporary board (pads, mask, silkscreen) with its STEP model, so the model's colours are kept and
-any misalignment with the pads shows. The site build compresses them (scripts/optimize_models.mjs).
+any misalignment with the pads shows. A part not placed on the PCB (`(on_board no)`, no footprint,
+e.g. a panel connector) names its STEP in its Notes field instead; that model is exported alone,
+with no board body or pads. The site build compresses them (scripts/optimize_models.mjs).
 An empty library gives an empty catalog. Family data needs PyYAML (python3-yaml).
 """
 import argparse
@@ -229,41 +232,75 @@ def export_thumb(cli, pretty_dir, fp_name, out_file, tmp):
     return True
 
 
+# A part not placed on the PCB names its model in Notes: "... 3D model ${KIPRJMOD}/lib/dropout-kicad-library/3dmodels/....step, ..."
+NOTES_MODEL = re.compile(re.escape(MODEL_PREFIX) + r"(3dmodels/[^\s,;]+?\.(?:step|stp))", re.IGNORECASE)
+
+
+def notes_model(fields):
+    m = NOTES_MODEL.search(fields.get("Notes", ""))
+    return MODEL_PREFIX + m.group(1) if m else None
+
+
 POINT = re.compile(r"\((?:start|end|mid|center|xy|at) (-?[\d.]+) (-?[\d.]+)")
 
 
-def export_glb(cli, lib_dir, pretty_dir, fp_lib, fp_name, out_file, tmp):
-    """Place the footprint on a board just larger than it and export a GLB. Returns True on success."""
+def board_glb(cli, lib_dir, body, out_file, flags, what, tmp):
+    """Write a temporary board with the given footprint(s) and outline and export it as a GLB.
+    Returns True on success."""
     work = os.path.join(tmp, "glb")
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(os.path.join(work, "lib"))
     os.symlink(lib_dir, os.path.join(work, "lib", "dropout-kicad-library"))  # resolves ${KIPRJMOD}/lib/...
+    board = (
+        '(kicad_pcb (version 20260206) (generator "dropout-catalog")\n'
+        '(general (thickness 1.6))\n'
+        '(layers (0 "F.Cu" signal) (2 "B.Cu" signal) (1 "F.Mask" user) (3 "B.Mask" user)'
+        ' (5 "F.SilkS" user) (7 "B.SilkS" user) (25 "Edge.Cuts" user))\n'
+        f"{body}\n)\n"
+    )
+    pcb = os.path.join(work, "board.kicad_pcb")
+    open(pcb, "w", encoding="utf-8").write(board)
+    os.makedirs(os.path.dirname(out_file), exist_ok=True)
+    # Without a project file kicad-cli 10 leaves ${KIPRJMOD} unset and silently exports no model ("File not found")
+    r = subprocess.run([cli, "pcb", "export", "glb", "-f", *flags, "-D", f"KIPRJMOD={work}", "-o", out_file, pcb],
+                       capture_output=True, text=True)
+    if r.returncode != 0 or not os.path.exists(out_file):
+        print(f"warning: GLB export failed for {what}: {r.stderr.strip() or r.stdout.strip()}", file=sys.stderr)
+        return False
+    if "Could not add 3D model" in r.stdout + r.stderr:
+        print(f"warning: GLB for {what} has no 3D model: {(r.stdout + r.stderr).strip()}", file=sys.stderr)
+        return False
+    return True
 
+
+def export_glb(cli, lib_dir, pretty_dir, fp_lib, fp_name, out_file, tmp):
+    """Place the footprint on a board just larger than it and export a GLB. Returns True on success."""
     fp = open(os.path.join(pretty_dir, f"{fp_name}.kicad_mod"), encoding="utf-8").read()
     pts = [(float(x), float(y)) for x, y in POINT.findall(fp)]
     xs, ys = [p[0] for p in pts] or [0], [p[1] for p in pts] or [0]
     m = 1.0  # board margin around the footprint, mm
     # a board footprint is the library footprint with a library-qualified name and a position
     placed = fp.replace(f'(footprint "{fp_name}"', f'(footprint "{fp_lib}:{fp_name}"\n\t(at 0 0)', 1)
-    board = (
-        '(kicad_pcb (version 20260206) (generator "dropout-catalog")\n'
-        '(general (thickness 1.6))\n'
-        '(layers (0 "F.Cu" signal) (2 "B.Cu" signal) (1 "F.Mask" user) (3 "B.Mask" user)'
-        ' (5 "F.SilkS" user) (7 "B.SilkS" user) (25 "Edge.Cuts" user))\n'
+    body = (
         f"{placed}\n"
         f"(gr_rect (start {min(xs) - m} {min(ys) - m}) (end {max(xs) + m} {max(ys) + m})"
-        ' (stroke (width 0.05) (type solid)) (fill no) (layer "Edge.Cuts"))\n)\n'
+        ' (stroke (width 0.05) (type solid)) (fill no) (layer "Edge.Cuts"))'
     )
-    pcb = os.path.join(work, "board.kicad_pcb")
-    open(pcb, "w", encoding="utf-8").write(board)
-    os.makedirs(os.path.dirname(out_file), exist_ok=True)
-    r = subprocess.run([cli, "pcb", "export", "glb", "-f", "--include-pads", "--include-silkscreen",
-                        "--include-soldermask", "-o", out_file, pcb], capture_output=True, text=True)
-    if r.returncode != 0 or not os.path.exists(out_file):
-        print(f"warning: GLB export failed for {fp_lib}:{fp_name}: {r.stderr.strip() or r.stdout.strip()}",
-              file=sys.stderr)
-        return False
-    return True
+    return board_glb(cli, lib_dir, body, out_file, ["--include-pads", "--include-silkscreen", "--include-soldermask"],
+                     f"{fp_lib}:{fp_name}", tmp)
+
+
+def export_model_glb(cli, lib_dir, model, out_file, what, tmp):
+    """Export a model on its own (a part not placed on the PCB): a bare footprint holding only the
+    model, on a board whose body is left out, so the GLB has no board, pads, or silkscreen. The
+    model keeps its own frame (glTF +Y is its +Z)."""
+    body = (
+        '(footprint "DropOut_Catalog:model" (layer "F.Cu") (at 0 0) (attr through_hole)\n'
+        '\t(property "Reference" "REF**" (at 0 0) (layer "F.SilkS") (hide yes))\n'
+        f'\t(model "{model}" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0)))\n)\n'
+        '(gr_rect (start -1 -1) (end 1 1) (stroke (width 0.05) (type solid)) (fill no) (layer "Edge.Cuts"))'
+    )
+    return board_glb(cli, lib_dir, body, out_file, ["--no-board-body"], what, tmp)
 
 
 def main():
@@ -287,10 +324,12 @@ def main():
 
     parts = []
     glbs = {}  # footprint -> GLB path (or None), one export per footprint
+    n_loose = 0  # models of parts not placed on the PCB
     with tempfile.TemporaryDirectory() as tmp:
         for f in sym_files:
             sym_path = os.path.join(sym_dir, f)
             for lib, name, fields, extends, sym in read_symbols(sym_path):
+                on_board = (first(sym, "on_board") or [None, "yes"])[1] != "no"
                 base = f"parts/{slug(lib)}/{slug(name)}"
                 dest = os.path.join(out, "public", base)
                 os.makedirs(dest, exist_ok=True)
@@ -331,6 +370,17 @@ def main():
                                 if export_glb(cli, lib_dir, pretty, fp_lib, fp_name, os.path.join(out, "public", rel), tmp):
                                     glbs[footprint] = rel
                         glb = glbs[footprint]
+                elif not footprint and not on_board:
+                    # not placed on the PCB: the model named in Notes, on its own
+                    model = notes_model(fields)
+                    step = model[len(MODEL_PREFIX):] if model else None
+                    if step and os.path.exists(os.path.join(lib_dir, step)):
+                        rel = f"models/parts/{slug(lib)}/{slug(name)}.glb"
+                        if export_model_glb(cli, lib_dir, model, os.path.join(out, "public", rel), f"{lib}:{name}", tmp):
+                            glb = rel
+                            n_loose += 1
+                    elif model:
+                        print(f"warning: {lib}:{name}: model {step} named in Notes is not in the library", file=sys.stderr)
 
                 parts.append({
                     "id": f"{lib}:{name}",
@@ -344,6 +394,7 @@ def main():
                     "keywords": fields.get("ki_keywords", ""),
                     "datasheet": fields.get("Datasheet", ""),
                     "footprint": footprint,
+                    "on_board": on_board,
                     "manufacturer": fields.get("Manufacturer", ""),
                     "mpn": fields.get("MPN", ""),
                     "digikey_pn": fields.get("DigiKey_PN", ""),
@@ -367,7 +418,7 @@ def main():
         json.dump(families, fh, indent=1, ensure_ascii=False)
     with open(os.path.join(out, "src", "data", "parts.json"), "w", encoding="utf-8") as fh:
         json.dump(parts, fh, indent=1, ensure_ascii=False)
-    print(f"catalog: {len(parts)} part(s), {sum(1 for g in glbs.values() if g)} 3D model(s) from {len(sym_files)} symbol librar{'y' if len(sym_files) == 1 else 'ies'}, "
+    print(f"catalog: {len(parts)} part(s), {sum(1 for g in glbs.values() if g) + n_loose} 3D model(s) from {len(sym_files)} symbol librar{'y' if len(sym_files) == 1 else 'ies'}, "
           f"{sum(1 for p in parts if p['catalog'])} in {len(families)} famil{'y' if len(families) == 1 else 'ies'}")
 
 

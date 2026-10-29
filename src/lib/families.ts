@@ -1,7 +1,7 @@
 // McMaster-style family tables: one table per group, the attributes that differ as columns and the
 // ones every row shares listed above the table. Manufacturer and Temperature come from the parts'
 // fields; everything else from their `catalog:` blocks.
-import type { Family, Part } from './parts';
+import { thumbnail, type Family, type Part } from './parts';
 
 export interface GroupTable {
 	name: string;
@@ -46,7 +46,7 @@ export function groupTables(family: string, fam: Family, parts: Part[]): GroupTa
 				columns,
 				value: attr,
 				mates,
-				picture: rows.find((p) => p.thumb_svg)?.thumb_svg ?? null,
+				picture: rows.length ? thumbnail(rows.find((p) => p.thumb_svg) ?? rows[0]) : null,
 				rowPictures: new Set(rows.map((p) => p.footprint)).size > 1,
 			};
 		})

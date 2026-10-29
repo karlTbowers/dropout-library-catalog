@@ -2,7 +2,7 @@
 // Filterable, sortable part list: facet checkboxes with live counts, spec columns per category,
 // removable filter chips, and the whole state in the URL (?q=…&mfr=TDK&case=0603&sort=value).
 // Rows are rendered at build time; the script only shows, hides, and reorders them.
-import { asset, type Part } from '../lib/parts';
+import { asset, thumbnail, type Part } from '../lib/parts';
 import { parseNumber, type Column } from '../lib/specs';
 
 interface Props {
@@ -86,9 +86,9 @@ const options = facets.map((c) => {
 								data-text={[p.name, p.mpn, p.value, p.manufacturer, p.description, p.keywords, p.footprint, ...columns.map((c) => c.value(p))].join(' ').toLowerCase()}
 							>
 								<td class="thumb">
-									{p.thumb_svg && (
+									{thumbnail(p) && (
 										<a href={url} tabindex="-1" aria-hidden="true">
-											<img src={asset(p.thumb_svg)} alt="" loading="lazy" decoding="async" width="56" height="56" />
+											<img src={asset(thumbnail(p)!)} alt="" loading="lazy" decoding="async" width="56" height="56" />
 										</a>
 									)}
 								</td>

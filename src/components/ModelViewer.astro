@@ -2,15 +2,18 @@
 // Interactive 3D view of a footprint's model (a GLB built by scripts/extract_catalog.py and
 // compressed by scripts/optimize_models.mjs). three.js is bundled from npm (exact version in
 // package.json) and only loaded when the viewer scrolls near the screen. Without a model it
-// shows a plain "no 3D model" panel.
+// shows a plain "no 3D model" panel. A part not placed on the PCB (no footprint) shows its model
+// alone, without the Board and Silkscreen toggles.
 import { asset } from '../lib/parts';
 
 interface Props {
 	glb: string | null; // path under public/, e.g. models/<Lib>/<Footprint>.glb
-	footprint: string;
+	footprint: string; // empty for a part not placed on the PCB
+	name: string; // the part, for labels when there is no footprint
 	step?: string | null; // STEP download URL, if the footprint has a model
 }
-const { glb, footprint, step } = Astro.props;
+const { glb, footprint, name, step } = Astro.props;
+const label = footprint ? `footprint ${footprint}` : name;
 ---
 
 <figure class="viewer3d" data-glb={glb ? asset(glb) : undefined}>
@@ -18,7 +21,7 @@ const { glb, footprint, step } = Astro.props;
 		glb ? (
 			<>
 				<div class="viewer3d-stage">
-					<canvas aria-label={`Interactive 3D model of footprint ${footprint}`} role="img" />
+					<canvas aria-label={`Interactive 3D model of ${label}`} role="img" />
 					<p class="viewer3d-status" aria-live="polite">Loading 3D model…</p>
 				</div>
 				<div class="viewer3d-controls" hidden>
@@ -27,19 +30,19 @@ const { glb, footprint, step } = Astro.props;
 						<button type="button" data-view="top">Top</button>
 						<button type="button" data-view="bottom">Bottom</button>
 					</span>
-					<label><input type="checkbox" data-toggle="board" checked /> Board</label>
-					<label><input type="checkbox" data-toggle="silkscreen" checked /> Silkscreen</label>
+					{footprint && <label><input type="checkbox" data-toggle="board" checked /> Board</label>}
+					{footprint && <label><input type="checkbox" data-toggle="silkscreen" checked /> Silkscreen</label>}
 					{step && <a href={step}>Download STEP</a>}
 				</div>
 			</>
 		) : (
 			<div class="viewer3d-stage viewer3d-none">
-				<p>No 3D model for this footprint.</p>
+				<p>No 3D model for this {footprint ? 'footprint' : 'part'}.</p>
 			</div>
 		)
 	}
 	<figcaption>
-		3D model{glb ? ' on its footprint' : ''}{glb && <span class="viewer3d-hint"> · drag to rotate, scroll or pinch to zoom, right-drag or two-finger drag to pan</span>}
+		3D model{glb ? (footprint ? ' on its footprint' : ', not placed on the PCB') : ''}{glb && <span class="viewer3d-hint"> · drag to rotate, scroll or pinch to zoom, right-drag or two-finger drag to pan</span>}
 	</figcaption>
 </figure>
 

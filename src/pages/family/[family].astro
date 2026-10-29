@@ -2,7 +2,7 @@
 // One page per mechanical-part family, McMaster-Carr style: a section per group with its picture,
 // the specs every row shares, and a table of the orderable variants.
 import Base from '../../layouts/Base.astro';
-import { loadFamilies, loadParts, asset, type Family, type Part } from '../../lib/parts';
+import { loadFamilies, loadParts, asset, thumbnail, type Family, type Part } from '../../lib/parts';
 import { byMpn, groupTables, type GroupTable } from '../../lib/families';
 
 export function getStaticPaths() {
@@ -70,7 +70,7 @@ const partUrl = (p: Part) => `${base}parts/${p.slug}/`;
 							<tbody>
 								{t.parts.map((p) => (
 									<tr>
-										{t.rowPictures && <td class="thumb">{p.thumb_svg && <img src={asset(p.thumb_svg)} alt="" loading="lazy" width="48" height="48" />}</td>}
+										{t.rowPictures && <td class="thumb">{thumbnail(p) && <img src={asset(thumbnail(p)!)} alt="" loading="lazy" width="48" height="48" />}</td>}
 										<td class="pn"><a href={partUrl(p)}>{p.mpn || p.name}</a></td>
 										{t.columns.map((c) => <td>{t.value(p, c)}</td>)}
 									</tr>

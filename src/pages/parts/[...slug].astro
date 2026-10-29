@@ -21,6 +21,9 @@ const link = (pn: string) => (pn && pn !== '-' ? pn : null);
 const digikey = link(part.digikey_pn);
 const mouser = link(part.mouser_pn);
 const datasheet = part.datasheet && part.datasheet !== '~' ? part.datasheet : null;
+// A part not placed on the PCB has no footprint; its model comes from its Notes.
+const offBoard = !part.on_board && !part.footprint;
+const noFootprint = 'None: not placed on the PCB';
 const stepPath = part.model?.replace(/^\$\{KIPRJMOD\}\/lib\/dropout-kicad-library\//, '');
 const stepUrl = stepPath ? `${LIBRARY_REPO}/blob/main/${stepPath}` : null;
 const qual = qualification(part);
@@ -57,7 +60,7 @@ const groups: [string, Row[]][] = [
 	]],
 	['Package', [
 		['Case', f.Case ?? ''],
-		['Footprint', part.footprint],
+		['Footprint', offBoard ? noFootprint : part.footprint],
 		['3D model', stepUrl ? { href: stepUrl, text: 'STEP' } : ''],
 	]],
 	['Sourcing', [
@@ -103,6 +106,7 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 				<span class={qual.startsWith('AEC') ? 'badge ok' : 'badge'}>{qual}</span>
 				{f.Case && <span class="badge">{f.Case}</span>}
 				<span class="badge">{cat.label}</span>
+				{offBoard && <span class="badge">Not on the PCB</span>}
 			</div>
 			{
 				fam && familyUrl && (
@@ -165,7 +169,7 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 		}
 	</div>
 
-	{part.footprint && <><h2>3D model</h2><ModelViewer glb={part.model_glb} footprint={part.footprint} step={stepUrl} /></>}
+	{(part.footprint || offBoard) && <><h2>3D model</h2><ModelViewer glb={part.model_glb} footprint={part.footprint} name={part.mpn || part.name} step={stepUrl} /></>}
 
 	<h2>Specifications</h2>
 	<div class="spec-groups">
@@ -178,7 +182,7 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 							{rows.map(([k, v]) => (
 								<tr>
 									<th>{k}</th>
-									<td class={k === 'Footprint' || k === 'MPN' ? 'mono' : undefined}>
+									<td class={(k === 'Footprint' && !offBoard) || k === 'MPN' ? 'mono' : undefined}>
 										{typeof v === 'string' ? v : <a href={v.href}>{v.text}</a>}
 									</td>
 								</tr>
@@ -196,7 +200,7 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 				<tr><th>Library reference</th><td class="mono">{part.id}</td></tr>
 				<tr><th>Reference designator</th><td class="mono">{f.Reference}</td></tr>
 				<tr><th>Value field</th><td class="mono">{part.value}</td></tr>
-				<tr><th>Footprint</th><td class="mono">{part.footprint}</td></tr>
+				<tr><th>Footprint</th><td class={offBoard ? undefined : 'mono'}>{offBoard ? noFootprint : part.footprint}</td></tr>
 				{f.ki_keywords && <tr><th>Keywords</th><td>{f.ki_keywords}</td></tr>}
 				{f.ki_fp_filters && <tr><th>Footprint filters</th><td class="mono">{f.ki_fp_filters}</td></tr>}
 			</tbody>

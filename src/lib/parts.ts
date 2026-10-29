@@ -14,13 +14,14 @@ export interface Part {
 	description: string;
 	keywords: string;
 	datasheet: string;
-	footprint: string;
+	footprint: string; // empty for a part not placed on the PCB
+	on_board: boolean; // false for a part bought but not placed on the PCB (e.g. a panel connector): no footprint
 	manufacturer: string;
 	mpn: string;
 	digikey_pn: string;
 	mouser_pn: string;
-	model: string | null; // the footprint's model path as written in the footprint
-	model_glb: string | null; // models/<FpLib>/<Footprint>.glb under public/, when a model was exported
+	model: string | null; // the footprint's model path as written in the footprint (off-board parts: from Notes)
+	model_glb: string | null; // models/<FpLib>/<Footprint>.glb (off-board parts: models/parts/<Lib>/<Symbol>.glb) under public/
 	fields: Record<string, string>;
 	symbol_svgs: string[];
 	footprint_svg: string | null;
@@ -51,6 +52,9 @@ export function loadParts(): Part[] {
 	const file = join(process.cwd(), 'src/data/parts.json');
 	return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Part[]) : [];
 }
+
+// Picture for lists and family tables: the footprint, or the symbol for a part with no footprint.
+export const thumbnail = (p: Part) => p.thumb_svg ?? p.symbol_svgs[0] ?? null;
 
 export const asset = (path: string) => `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${path}`;
 

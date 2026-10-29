@@ -27,6 +27,7 @@ export interface Part {
 	footprint_svg: string | null;
 	thumb_svg: string | null; // footprint drawing without the REF** text, for thumbnails
 	catalog: CatalogBlock | null; // family membership, from the part's part.yaml (mechanical parts)
+	schematic: string | null; // the part as KiCad Schematic Editor clipboard text, for "Copy to schematic"
 }
 
 // A part's `catalog:` block (library parts/<MPN>/part.yaml; format in parts/families.yaml there).

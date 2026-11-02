@@ -4,7 +4,7 @@
 // passives, same footprint otherwise.
 import Base from '../../layouts/Base.astro';
 import ModelViewer from '../../components/ModelViewer.astro';
-import { loadFamilies, loadParts, asset, LIBRARY_REPO, type Part } from '../../lib/parts';
+import { loadFamilies, loadParts, asset, isModelOnly, LIBRARY_REPO, type Part } from '../../lib/parts';
 import { byMpn, groupTables } from '../../lib/families';
 import { category, columnsFor, displayValue, keySpecs, qualification, spaceUnit } from '../../lib/specs';
 
@@ -23,7 +23,10 @@ const mouser = link(part.mouser_pn);
 const datasheet = part.datasheet && part.datasheet !== '~' ? part.datasheet : null;
 // A part not placed on the PCB has no footprint; its model comes from its Notes.
 const offBoard = !part.on_board && !part.footprint;
-const noFootprint = 'None: not placed on the PCB';
+// A model-only part (e.g. a busbar) has neither symbol nor footprint: a 3D model and a drawing.
+const modelOnly = isModelOnly(part);
+const noFootprint = modelOnly ? 'None: model-only part' : 'None: not placed on the PCB';
+const modelPath = part.model ?? '';
 const stepPath = part.model?.replace(/^\$\{KIPRJMOD\}\/lib\/dropout-kicad-library\//, '');
 const stepUrl = stepPath ? `${LIBRARY_REPO}/blob/main/${stepPath}` : null;
 const qual = qualification(part);
@@ -64,9 +67,9 @@ const groups: [string, Row[]][] = [
 		['3D model', stepUrl ? { href: stepUrl, text: 'STEP' } : ''],
 	]],
 	['Sourcing', [
-		['DigiKey', digikey ? { href: `https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(digikey)}`, text: digikey } : 'Not stocked'],
-		['Mouser', mouser ? { href: `https://www.mouser.com/c/?q=${encodeURIComponent(mouser)}`, text: mouser } : 'Not stocked'],
-		['Datasheet', datasheet ? { href: datasheet, text: 'PDF / web page' } : ''],
+		['DigiKey', digikey ? { href: `https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(digikey)}`, text: digikey } : modelOnly && part.manufacturer === 'DropOut' ? 'Made in house' : 'Not stocked'],
+		['Mouser', mouser ? { href: `https://www.mouser.com/c/?q=${encodeURIComponent(mouser)}`, text: mouser } : modelOnly && part.manufacturer === 'DropOut' ? 'Made in house' : 'Not stocked'],
+		['Datasheet', datasheet ? { href: datasheet, text: modelOnly ? 'Drawing' : 'PDF / web page' } : ''],
 		['Reference manual', f.Reference_Manual ? { href: f.Reference_Manual, text: 'Link' } : ''],
 	]],
 ];
@@ -93,7 +96,8 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 	<div class="part-head">
 		<div class="part-media">
 			{
-				part.thumb_svg ? <img src={asset(part.thumb_svg)} alt={`Footprint ${part.footprint}`} />
+				modelOnly && part.drawing_svg ? <img src={asset(part.drawing_svg)} alt={`Drawing of ${part.name}`} />
+				: part.thumb_svg ? <img src={asset(part.thumb_svg)} alt={`Footprint ${part.footprint}`} />
 				: part.symbol_svgs[0] ? <img src={asset(part.symbol_svgs[0])} alt={`Symbol ${part.name}`} />
 				: null
 			}
@@ -103,10 +107,10 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 			<h1>{part.mpn || part.name}</h1>
 			<p class="part-desc">{part.description}</p>
 			<div class="badges">
-				<span class={qual.startsWith('AEC') ? 'badge ok' : 'badge'}>{qual}</span>
+				{!modelOnly && <span class={qual.startsWith('AEC') ? 'badge ok' : 'badge'}>{qual}</span>}
 				{f.Case && <span class="badge">{f.Case}</span>}
 				<span class="badge">{cat.label}</span>
-				{offBoard && <span class="badge">Not on the PCB</span>}
+				{modelOnly ? <span class="badge">Model only: no symbol or footprint</span> : offBoard && <span class="badge">Not on the PCB</span>}
 			</div>
 			{
 				fam && familyUrl && (
@@ -134,14 +138,16 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 						</button>
 					)
 				}
-				{datasheet && <a class={part.schematic ? 'btn' : 'btn primary'} href={datasheet}>Datasheet</a>}
+				{datasheet && <a class={part.schematic ? 'btn' : 'btn primary'} href={datasheet}>{modelOnly ? 'Drawing' : 'Datasheet'}</a>}
 				{digikey && <a class="btn" href={`https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(digikey)}`}>DigiKey</a>}
 				{mouser && <a class="btn" href={`https://www.mouser.com/c/?q=${encodeURIComponent(mouser)}`}>Mouser</a>}
 				{stepUrl && <a class="btn" href={stepUrl}>STEP model</a>}
 			</div>
 			{part.schematic && <p class="muted paste-hint">Copy to schematic, then paste in KiCad 10's Schematic Editor (Ctrl+V or Cmd+V) to place it with its footprint and fields.</p>}
 			<div class="use-box">
-				<p>Symbol <code>{part.id}</code><button class="copy" data-copy={part.id}>Copy</button></p>
+				{modelOnly
+					? modelPath && <p>3D model <code>{modelPath}</code><button class="copy" data-copy={modelPath}>Copy</button></p>
+					: <p>Symbol <code>{part.id}</code><button class="copy" data-copy={part.id}>Copy</button></p>}
 				{part.mpn && <p>MPN <code>{part.mpn}</code><button class="copy" data-copy={part.mpn}>Copy</button></p>}
 			</div>
 			{
@@ -160,6 +166,14 @@ const relCols = columnsFor(part.category).filter((c) => c.id !== 'fp');
 
 	<h2>Drawings</h2>
 	<div class="drawings">
+		{
+			part.drawing_svg && (
+				<figure class="drawing drawing-wide">
+					<a href={asset(part.drawing_svg)}><img src={asset(part.drawing_svg)} alt={`Dimensioned drawing of ${part.name}`} loading="lazy" /></a>
+					<figcaption>Dimensioned drawing (mm). Open full size: click the drawing.</figcaption>
+				</figure>
+			)
+		}
 		{
 			part.symbol_svgs.map((svg, i) => (
 				<figure class="drawing">

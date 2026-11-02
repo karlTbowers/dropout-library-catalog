@@ -12,6 +12,7 @@ Reads <library-dir>/symbols/*.kicad_sym and <library-dir>/footprints/*.pretty an
   public/parts/<Lib>/<Symbol>/thumb.svg       the same without REF**, cropped, for thumbnails
   public/models/<FpLib>/<Footprint>.glb       the footprint's 3D model on its pads, one per footprint
   public/models/parts/<Lib>/<Symbol>.glb      the 3D model of a part not placed on the PCB (no footprint)
+  public/parts/<Lib>/<Name>/drawing.svg       a model-only part's dimensioned drawing
                                               (each parts.json entry also carries `schematic`, the
                                               part as KiCad clipboard text for "Copy to schematic")
   src/data/families.json                      catalog families for mechanical parts, from
@@ -22,7 +23,9 @@ Drawings and models come from kicad-cli (KiCad 10). Each GLB is the footprint pl
 temporary board (pads, mask, silkscreen) with its STEP model, so the model's colours are kept and
 any misalignment with the pads shows. A part not placed on the PCB (`(on_board no)`, no footprint,
 e.g. a panel connector) names its STEP in its Notes field instead; that model is exported alone,
-with no board body or pads. The site build compresses them (scripts/optimize_models.mjs).
+with no board body or pads. A model-only part (`kind: model` in <library-dir>/parts/<name>/part.yaml,
+e.g. a busbar: no symbol, no footprint) gets an entry from its part.yaml, its model exported the
+same way, and its dimensioned drawing copied. The site build compresses them (scripts/optimize_models.mjs).
 An empty library gives an empty catalog. Family data needs PyYAML (python3-yaml).
 """
 import argparse
@@ -232,6 +235,23 @@ def export_thumb(cli, pretty_dir, fp_name, out_file, tmp):
     return True
 
 
+def read_model_parts(lib_dir):
+    """Model-only parts (library docs/CONTRIBUTING.md "Model-only parts"): parts/<name>/part.yaml with
+    `kind: model`, a 3D model and an optional drawing, but no symbol and no footprint."""
+    parts_dir = os.path.join(lib_dir, "parts")
+    if not os.path.isdir(parts_dir):
+        return []
+    import yaml
+    found = []
+    for d in sorted(os.listdir(parts_dir)):
+        f = os.path.join(parts_dir, d, "part.yaml")
+        if os.path.exists(f):
+            y = yaml.safe_load(open(f, encoding="utf-8")) or {}
+            if y.get("kind") == "model" and y.get("library") and y.get("name"):
+                found.append(y)
+    return found
+
+
 # A part not placed on the PCB names its model in Notes: "... 3D model ${KIPRJMOD}/lib/dropout-kicad-library/3dmodels/....step, ..."
 NOTES_MODEL = re.compile(re.escape(MODEL_PREFIX) + r"(3dmodels/[^\s,;]+?\.(?:step|stp))", re.IGNORECASE)
 
@@ -405,9 +425,63 @@ def main():
                     "symbol_svgs": units,
                     "footprint_svg": fp_svg,
                     "thumb_svg": thumb_svg,
+                    "drawing_svg": None,
                     # derived symbols would need flattening into their parent first; none exist yet
                     "schematic": None if extends else schematic_snippet(lib, sym),
                 })
+
+        n_model_only = 0
+        for y in read_model_parts(lib_dir):
+            lib, name = y["library"], y["name"]
+            fields = {k: str(v) for k, v in (y.get("fields") or {}).items()}
+            base = f"parts/{slug(lib)}/{slug(name)}"
+            dest = os.path.join(out, "public", base)
+            os.makedirs(dest, exist_ok=True)
+            drawing = None
+            if y.get("drawing"):
+                src = os.path.join(lib_dir, y["drawing"])
+                if os.path.exists(src):
+                    shutil.copy(src, os.path.join(dest, "drawing.svg"))
+                    drawing = f"{base}/drawing.svg"
+                else:
+                    print(f"warning: {lib}:{name}: drawing {y['drawing']} is not in the library", file=sys.stderr)
+            model = MODEL_PREFIX + y["model"] if y.get("model") else None
+            glb = None
+            if model and os.path.exists(os.path.join(lib_dir, y["model"])):
+                rel = f"models/parts/{slug(lib)}/{slug(name)}.glb"
+                if export_model_glb(cli, lib_dir, model, os.path.join(out, "public", rel), f"{lib}:{name}", tmp):
+                    glb = rel
+                    n_loose += 1
+            elif model:
+                print(f"warning: {lib}:{name}: model {y['model']} is not in the library", file=sys.stderr)
+            n_model_only += 1
+            parts.append({
+                "id": f"{lib}:{name}",
+                "slug": f"{slug(lib)}/{slug(name)}",
+                "kind": "model",
+                "library": lib,
+                "category": lib.removeprefix("DropOut_"),
+                "name": name,
+                "extends": None,
+                "value": fields.get("Value", name),
+                "description": fields.get("Description", ""),
+                "keywords": fields.get("ki_keywords", ""),
+                "datasheet": fields.get("Datasheet", ""),
+                "footprint": "",
+                "on_board": False,
+                "manufacturer": fields.get("Manufacturer", ""),
+                "mpn": fields.get("MPN", ""),
+                "digikey_pn": fields.get("DigiKey_PN", ""),
+                "mouser_pn": fields.get("Mouser_PN", ""),
+                "model": model,
+                "model_glb": glb,
+                "fields": fields,
+                "symbol_svgs": [],
+                "footprint_svg": None,
+                "thumb_svg": drawing,  # lists and family tables show the drawing
+                "drawing_svg": drawing,
+                "schematic": None,  # nothing to paste: no symbol
+            })
 
     families, blocks = read_families(lib_dir)
     for p in parts:
@@ -419,7 +493,7 @@ def main():
     with open(os.path.join(out, "src", "data", "parts.json"), "w", encoding="utf-8") as fh:
         json.dump(parts, fh, indent=1, ensure_ascii=False)
     print(f"catalog: {len(parts)} part(s), {sum(1 for g in glbs.values() if g) + n_loose} 3D model(s) from {len(sym_files)} symbol librar{'y' if len(sym_files) == 1 else 'ies'}, "
-          f"{sum(1 for p in parts if p['catalog'])} in {len(families)} famil{'y' if len(families) == 1 else 'ies'}")
+          f"{n_model_only} model-only, {sum(1 for p in parts if p['catalog'])} in {len(families)} famil{'y' if len(families) == 1 else 'ies'}")
 
 
 if __name__ == "__main__":

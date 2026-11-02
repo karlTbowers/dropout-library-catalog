@@ -10,6 +10,7 @@ export interface Category {
 }
 
 const CATEGORY_LABEL: Record<string, string> = {
+	Busbar: 'Busbars',
 	Capacitor: 'Capacitors',
 	Resistor: 'Resistors',
 	Inductor: 'Inductors & chokes',
@@ -68,7 +69,7 @@ export const spaceUnit = (s: string) => s.replace(/^(±?[\d./]+)\s*([A-Za-z%]+)$
 
 // Footprint name without its library, e.g. "C_0603_1608Metric".
 export const footprintName = (p: Part) =>
-	p.footprint ? (p.footprint.split(':')[1] ?? p.footprint) : p.on_board === false ? 'Not on the PCB' : '';
+	p.footprint ? (p.footprint.split(':')[1] ?? p.footprint) : p.kind === 'model' ? 'Model only' : p.on_board === false ? 'Not on the PCB' : '';
 
 export interface Column {
 	id: string;

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 export interface Part {
 	id: string; // DropOut_<Category>:<Symbol>
 	slug: string; // <Library>/<Symbol>, URL path under /parts/
+	kind?: 'model'; // a model-only part (e.g. a busbar): a 3D model and a drawing, no symbol or footprint
 	library: string;
 	category: string;
 	name: string;
@@ -25,7 +26,8 @@ export interface Part {
 	fields: Record<string, string>;
 	symbol_svgs: string[];
 	footprint_svg: string | null;
-	thumb_svg: string | null; // footprint drawing without the REF** text, for thumbnails
+	thumb_svg: string | null; // footprint drawing without the REF** text, for thumbnails (model-only parts: the drawing)
+	drawing_svg?: string | null; // a model-only part's dimensioned drawing
 	catalog: CatalogBlock | null; // family membership, from the part's part.yaml (mechanical parts)
 	schematic: string | null; // the part as KiCad Schematic Editor clipboard text, for "Copy to schematic"
 }
@@ -54,8 +56,11 @@ export function loadParts(): Part[] {
 	return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Part[]) : [];
 }
 
-// Picture for lists and family tables: the footprint, or the symbol for a part with no footprint.
-export const thumbnail = (p: Part) => p.thumb_svg ?? p.symbol_svgs[0] ?? null;
+// Picture for lists and family tables: the footprint, or the symbol for a part with no footprint,
+// or the drawing of a model-only part.
+export const thumbnail = (p: Part) => p.thumb_svg ?? p.symbol_svgs[0] ?? p.drawing_svg ?? null;
+
+export const isModelOnly = (p: Part) => p.kind === 'model';
 
 export const asset = (path: string) => `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${path}`;
 
